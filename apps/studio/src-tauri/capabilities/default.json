@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window: core APIs (events, window, app). Serial/TCP access goes through the app's own link_* commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

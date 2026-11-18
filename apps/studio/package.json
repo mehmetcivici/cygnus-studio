@@ -9,7 +9,9 @@
     "build:demo": "vite build --mode demo",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@cygnus/protocol": "*",
