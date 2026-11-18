@@ -1,7 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core APIs (events, window, app). Serial/TCP access goes through the app's own link_* commands.",
+  "description": "Main window only: link_* commands (serial/TCP) and listening to the link://closed event. Nothing else (no window, webview, menu, tray, path or app APIs) is granted.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-link-list-serial",
+    "allow-link-open-serial",
+    "allow-link-open-tcp",
+    "allow-link-write",
+    "allow-link-close"
+  ]
 }

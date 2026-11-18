@@ -120,4 +120,49 @@ describe('DriveController', () => {
     setConnected(false);
     expect(s?.arm()).toEqual({ ok: false, reason: 'notConnected' });
   });
+
+  it('re-arm starts from neutral: onDisarm resets the target, armGeneration increments (uygulama #2)', () => {
+    const { ctl, store } = setup();
+    const s = ctl.requestDrive('device', 'aa');
+    if (!s) throw new Error('no session');
+    // The screen contract: target lives in the screen, reset on every disarm.
+    let target = 0;
+    const armedWith: number[] = [];
+    s.onDisarm(() => (target = 0));
+    s.onArm((gen) => armedWith.push(gen));
+    expect(s.armGeneration).toBe(0);
+    s.arm();
+    target = 3000;
+    ctl.cut('blur');
+    expect(target).toBe(0);
+    expect(s.arm()).toEqual({ ok: true });
+    expect(target).toBe(0);
+    expect(armedWith).toEqual([1, 2]);
+    expect(store.getState().session?.armGeneration).toBe(2);
+    // disarm keeps the generation; only arming bumps it
+    s.disarm();
+    expect(s.armGeneration).toBe(2);
+  });
+
+  it('sends neutral on a user disconnect while the link is still up (uygulama #4)', () => {
+    const { ctl, stop } = setup();
+    const s = ctl.requestDrive('tuner', 'aa');
+    s?.arm();
+    ctl.cut('disconnected');
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to arm while recovery mode broadcasts', () => {
+    const store = create<DriveState>(() => ({ session: null, estopLatched: false, lastStop: null }));
+    const dev = { uid48: 'aa', online: true, capabilities: { control: true }, control: { stop: vi.fn() } };
+    let rec = true;
+    const ctl = new DriveController(
+      { resolve: () => dev as unknown as DeviceHandle, isConnected: () => true, statusOf: () => 'ok', now: () => 0, recoveryActive: () => rec },
+      store,
+    );
+    const s = ctl.requestDrive('tuner', 'aa');
+    expect(s?.arm()).toEqual({ ok: false, reason: 'recovery' });
+    rec = false;
+    expect(s?.arm()).toEqual({ ok: true });
+  });
 });

@@ -58,6 +58,16 @@ export function fmtValue(value: number | null | undefined, unit?: string, digits
   return TIGHT_UNITS.has(unit) ? `${num}${unit}` : `${num} ${unit}`;
 }
 
+/**
+ * Percent in the UI language: Turkish prefixes the sign (`%28`, `%12,5`), English suffixes it
+ * (`28%`). `value` is already in percent (28 → "%28"); pass `{ ratio: true }` for 0–1 values.
+ * The only sanctioned way to print a percentage — never write `%${n}` or `${n}%` by hand.
+ */
+export function fmtPercent(value: number | null | undefined, digits = 0, opts: FmtOptions & { ratio?: boolean } = {}): string {
+  const v = value == null ? value : opts.ratio ? value * 100 : value;
+  return fmtValue(v, '%', digits, opts);
+}
+
 /** Hex for CAN IDs and raw bytes: `fmtHex(0x1a3, 3)` → `0x1A3`. */
 export function fmtHex(value: number, width = 0, prefix = true): string {
   const s = (value >>> 0).toString(16).toUpperCase().padStart(width, '0');

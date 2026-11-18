@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { setLang, t, tl, useLangStore, type Lang, type LocalizedText, type MessageParams } from './i18n';
-import { fmtNumber, fmtValue, type FmtOptions } from './format';
+import { fmtNumber, fmtPercent, fmtValue, type FmtOptions } from './format';
 import './messages';
 
 export {
@@ -14,7 +14,7 @@ export {
   LANGS,
 } from './i18n';
 export type { Lang, LocalizedText, Messages, MessageKeys, MessageShape, MessageParams, Translator } from './i18n';
-export { fmtNumber, fmtValue, fmtHex, decimalSeparator, NO_VALUE } from './format';
+export { fmtNumber, fmtValue, fmtPercent, fmtHex, decimalSeparator, NO_VALUE } from './format';
 export type { FmtOptions } from './format';
 export { tCommon, tNav, tStatus, tUi, tApp } from './messages';
 
@@ -25,6 +25,8 @@ export interface I18n {
   tl: (text: LocalizedText | string | null | undefined) => string;
   fmtNumber: (value: number | null | undefined, digits?: number, opts?: Omit<FmtOptions, 'lang'>) => string;
   fmtValue: (value: number | null | undefined, unit?: string, digits?: number, opts?: Omit<FmtOptions, 'lang'>) => string;
+  /** `%28` (TR) / `28%` (EN); value in percent unless `{ ratio: true }`. */
+  fmtPercent: (value: number | null | undefined, digits?: number, opts?: Omit<FmtOptions, 'lang'> & { ratio?: boolean }) => string;
 }
 
 /**
@@ -42,6 +44,10 @@ export function useI18n(): I18n {
     fmtNumber: useCallback((v: number | null | undefined, d?: number, o?: Omit<FmtOptions, 'lang'>) => fmtNumber(v, d, { ...o, lang }), [lang]),
     fmtValue: useCallback(
       (v: number | null | undefined, u?: string, d?: number, o?: Omit<FmtOptions, 'lang'>) => fmtValue(v, u, d, { ...o, lang }),
+      [lang],
+    ),
+    fmtPercent: useCallback(
+      (v: number | null | undefined, d?: number, o?: Omit<FmtOptions, 'lang'> & { ratio?: boolean }) => fmtPercent(v, d, { ...o, lang }),
       [lang],
     ),
   };

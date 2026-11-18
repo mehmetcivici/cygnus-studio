@@ -12,7 +12,10 @@ import {
   type ProjectDevice,
   type ProjectFile,
   type ProjectParseError,
+  type ProjectParseWarning,
 } from './schema';
+import { toast } from '../../ui';
+import { t } from '../../i18n';
 
 const LAST_KEY = 'cy.project.last';
 const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
@@ -25,11 +28,23 @@ export interface ProjectState {
   fileName: string | null;
 }
 
+function notifyWarnings(warnings: readonly ProjectParseWarning[]): void {
+  if (!warnings.length) return;
+  toast.warn(t('core.project.warnTitle'), {
+    id: 'project.warnings',
+    duration: 0,
+    description: t('core.project.warnBody', { count: warnings.length, paths: warnings.slice(0, 3).map((w) => w.path).join(', ') }),
+  });
+}
+
 function restore(): ProjectState {
   const raw = readStored(LAST_KEY);
   if (raw) {
     const r = parseProject(raw);
-    if (r.ok) return { project: r.project, dirty: false, fileName: null };
+    if (r.ok) {
+      if (r.warnings.length) queueMicrotask(() => notifyWarnings(r.warnings));
+      return { project: r.project, dirty: false, fileName: null };
+    }
   }
   return { project: emptyProject('', APP_VERSION), dirty: false, fileName: null };
 }
@@ -68,12 +83,17 @@ export function setVehicleConfig(vehicle: VehicleConfig | null): void {
   updateProject((p) => ({ ...p, vehicle }));
 }
 
-export function setProjectSection(id: string, value: unknown): void {
+/** Writes a section's data with its schema version (1 = not recorded). */
+export function setProjectSection(id: string, value: unknown, version = 1): void {
   updateProject((p) => {
     const sections = { ...p.sections };
+    const versions = { ...(p.sectionVersions ?? {}) };
     if (value === undefined) delete sections[id];
     else sections[id] = value;
-    return { ...p, sections };
+    if (value === undefined || version <= 1) delete versions[id];
+    else versions[id] = version;
+    const { sectionVersions: _drop, ...rest } = p;
+    return Object.keys(versions).length ? { ...rest, sections, sectionVersions: versions } : { ...rest, sections };
   });
 }
 
@@ -127,16 +147,20 @@ export function saveProjectToDisk(): void {
   useProject.setState({ dirty: false, fileName: name });
 }
 
-export function loadProjectText(text: string, fileName: string | null = null): { ok: true } | { ok: false; error: ProjectParseError; detail?: string } {
+export type ProjectLoadResult = { ok: true; warnings: ProjectParseWarning[] } | { ok: false; error: ProjectParseError; detail?: string };
+
+/** Loads a project file. Damaged parts that could be dropped are reported via a toast and `warnings`. */
+export function loadProjectText(text: string, fileName: string | null = null): ProjectLoadResult {
   const r = parseProject(text);
   if (!r.ok) return r;
   useProject.setState({ project: r.project, dirty: false, fileName });
   persistSoon();
-  return { ok: true };
+  notifyWarnings(r.warnings);
+  return { ok: true, warnings: r.warnings };
 }
 
 /** Shows the file chooser and loads the file. `null` when the user cancelled. */
-export async function openProjectFromDisk(): Promise<{ ok: true } | { ok: false; error: ProjectParseError; detail?: string } | null> {
+export async function openProjectFromDisk(): Promise<ProjectLoadResult | null> {
   const file = await pickFile(`${PROJECT_EXT},.json,application/json`);
   if (!file) return null;
   return loadProjectText(await file.text(), file.name);

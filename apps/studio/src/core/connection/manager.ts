@@ -12,6 +12,7 @@ import {
 } from '@cygnus/protocol';
 import { RealtimeRunner, createScenario, scenarios, type Simulation } from '@cygnus/simulator';
 import { readStoredJson, writeStored } from '../../lib/storage';
+import { confirmLeave } from '../safety/busy';
 import { createSlcanOverWebSerial, describeSerialPort, isWebSerialSupported, requestSerialPort } from '../transports/webserial';
 import { isTauri, openSerialStream, openTcpStream } from '../transports/tauri';
 import {
@@ -71,6 +72,13 @@ export const useConnection = create<ConnectionState>(() => ({
 }));
 
 type BusListener = (bus: CygnusBus | null) => void;
+/** Runs before a bus is closed on purpose (disconnect / source change), while it can still send. */
+type TeardownListener = (bus: CygnusBus) => void;
+
+export interface ConnectOptions {
+  /** Skip the busy-lock confirmation (internal restarts, tests). */
+  force?: boolean;
+}
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -82,6 +90,7 @@ class ConnectionManager {
   private bus: CygnusBus | null = null;
   private lastSource: ConnectionSource | null = null;
   private readonly listeners = new Set<BusListener>();
+  private readonly teardownListeners = new Set<TeardownListener>();
   private unsubs: Array<() => void> = [];
   private token = 0;
   private stopAmbient: (() => void) | null = null;
@@ -97,6 +106,15 @@ class ConnectionManager {
     return () => this.listeners.delete(cb);
   }
 
+  /**
+   * Called synchronously before an intentional teardown while the link is still up (phase
+   * `connected`), e.g. to send neutral commands. Not called when the link was lost.
+   */
+  onBeforeTeardown(cb: TeardownListener): () => void {
+    this.teardownListeners.add(cb);
+    return () => this.teardownListeners.delete(cb);
+  }
+
   private setBus(bus: CygnusBus | null): void {
     this.bus = bus;
     useConnection.setState({ bus });
@@ -109,7 +127,14 @@ class ConnectionManager {
     }
   }
 
-  async connect(source: ConnectionSource): Promise<boolean> {
+  /** Starts a simulator scenario; `assigned: false` brings boards up factory-fresh (number 63). */
+  connectScenario(scenarioId: string, opts: { assigned?: boolean; seed?: number } & ConnectOptions = {}): Promise<boolean> {
+    const { force, ...sim } = opts;
+    return this.connect({ kind: 'sim', scenarioId, ...sim }, { force });
+  }
+
+  async connect(source: ConnectionSource, opts: ConnectOptions = {}): Promise<boolean> {
+    if (!opts.force && this.bus && !(await confirmLeave('disconnect'))) return false;
     if (source.kind === 'webserial' && !source.port && isWebSerialSupported()) {
       // Ask for the port first (inside the click): cancelling the chooser keeps the current bus.
       try {
@@ -129,9 +154,9 @@ class ConnectionManager {
       let transport: Transport;
       let label = labelOf(source);
       if (source.kind === 'sim') {
-        sim = createScenario(source.scenarioId, { seed: source.seed ?? SIM_SEED });
+        sim = createScenario(source.scenarioId, { seed: source.seed ?? SIM_SEED, ...(source.assigned === false ? { assigned: false } : {}) });
         transport = sim.createTransport();
-        runner = new RealtimeRunner(sim, realScheduler, { tickMs: 4, maxCatchUpMs: 100, speed: useConnection.getState().simSpeed });
+        runner = new RealtimeRunner(sim, realScheduler, { tickMs: 4, speed: useConnection.getState().simSpeed });
         runner.start();
       } else if (source.kind === 'webserial') {
         if (!isWebSerialSupported()) throw new Error('webserial-unsupported');
@@ -194,21 +219,33 @@ class ConnectionManager {
   }
 
   /** Reopens the last source (granted serial ports reopen without a prompt). */
-  reconnect(): Promise<boolean> {
+  reconnect(opts: ConnectOptions = {}): Promise<boolean> {
     const src = this.lastSource ?? fromStored(useConnection.getState().source);
     if (!src) return Promise.resolve(false);
-    return this.connect(src);
+    return this.connect(src, opts);
   }
 
-  async disconnect(): Promise<void> {
+  /** Closes the link. Returns false when the user kept it (busy lock confirmation declined). */
+  async disconnect(opts: ConnectOptions = {}): Promise<boolean> {
+    if (!opts.force && this.bus && !(await confirmLeave('disconnect'))) return false;
     ++this.token;
     await this.teardown();
     useConnection.setState({ phase: 'idle', error: null });
+    return true;
   }
 
   private async teardown(): Promise<void> {
     this.setAmbient(false);
     const bus = this.bus;
+    if (bus && useConnection.getState().phase === 'connected') {
+      for (const cb of this.teardownListeners) {
+        try {
+          cb(bus);
+        } catch (e) {
+          console.error('[connection] teardown listener failed', e);
+        }
+      }
+    }
     const { runner } = useConnection.getState();
     for (const u of this.unsubs.splice(0)) u();
     if (bus) {

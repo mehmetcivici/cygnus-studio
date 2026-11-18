@@ -5,6 +5,7 @@ import { Button, StatusDot, cx, type DeviceStatus } from '../ui';
 import { connection, describeError, useConnection, type ConnectionPhase } from '../core';
 import { ConnectionChooser, scenarioInfo } from './connect';
 import { Popover } from './Popover';
+import { useLinkHealth } from './AlertCenter';
 import { tShell } from './messages';
 
 const DOT: Record<ConnectionPhase, DeviceStatus> = { idle: 'offline', connecting: 'boot', connected: 'ok', lost: 'fault', error: 'fault' };
@@ -29,15 +30,18 @@ export function ConnectionMenu() {
   const error = useConnection((s) => s.error);
   const source = useConnection((s) => s.source);
   const label = useSourceLabel();
+  const health = useLinkHealth();
   const close = useCallback(() => setOpen(false), []);
+  // Connected but the bus is unhealthy (short, silent, saturated, boards lost): the dot says so.
+  const dot: DeviceStatus = phase === 'connected' && health !== 'ok' ? health : DOT[phase];
   return (
     <Popover
       open={open}
       onClose={close}
       width={560}
       anchor={
-        <button type="button" className={cx('cy-connbtn', `is-${phase}`)} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-          <StatusDot status={DOT[phase]} pulse={phase === 'connecting' || phase === 'lost'} />
+        <button type="button" className={cx('cy-connbtn', `is-${phase}`, phase === 'connected' && `is-health-${health}`)} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          <StatusDot status={dot} pulse={phase === 'connecting' || phase === 'lost' || dot === 'fault'} />
           <span className="cy-connbtn__text">
             <span className="cy-connbtn__phase">{t(`core.conn.phase.${phase}`)}</span>
             {source && <span className="cy-connbtn__label">{label}</span>}

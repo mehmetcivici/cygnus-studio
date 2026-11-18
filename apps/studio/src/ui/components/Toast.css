@@ -85,8 +85,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: var(--cy-hit-min);
+  height: var(--cy-hit-min);
   padding: 0;
   border: 0;
   border-radius: var(--cy-r-sm);

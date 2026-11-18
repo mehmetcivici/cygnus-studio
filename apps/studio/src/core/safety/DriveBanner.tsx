@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { create } from 'zustand';
 import { OctagonAlert, Info, Square } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { Button, Kbd } from '../../ui';
@@ -17,8 +18,34 @@ export interface DriveBannerProps {
 
 const RECENT_MS = 8000;
 
+let globalHosts = 0;
+/**
+ * @internal The shell renders one global banner around the content area; while it is mounted,
+ * screen-level `<DriveBanner>`s render nothing (no double strips).
+ */
+export function useGlobalDriveBannerHost(): void {
+  useEffect(() => {
+    globalHosts++;
+    useDriveBannerHost.setState({ global: true });
+    return () => {
+      globalHosts--;
+      useDriveBannerHost.setState({ global: globalHosts > 0 });
+    };
+  }, []);
+}
+export const useDriveBannerHost = create<{ global: boolean }>(() => ({ global: false }));
+
+/**
+ * Screen-level strip. Superseded by the shell's global banner (renders nothing while that is
+ * mounted); kept so existing screens compile. `GlobalDriveBanner` uses `DriveBannerView`.
+ */
+export function DriveBanner(props: DriveBannerProps) {
+  const global = useDriveBannerHost((s) => s.global);
+  return global ? null : <DriveBannerView {...props} />;
+}
+
 /** Full-width strip: loud while armed; afterwards briefly explains why actuation stopped. */
-export function DriveBanner({ session, owner }: DriveBannerProps) {
+export function DriveBannerView({ session, owner, ownerLabel, onGoToOwner }: DriveBannerProps & { ownerLabel?: string; onGoToOwner?: () => void }) {
   const { t, lang } = useI18n();
   const info = useDrive((s) => s.session);
   const lastStop = useDrive((s) => s.lastStop);
@@ -40,9 +67,15 @@ export function DriveBanner({ session, owner }: DriveBannerProps) {
         <OctagonAlert size={18} aria-hidden />
         <strong>{t('core.drive.armedTitle')}</strong>
         <span className="cy-drive-banner__dev">{dev ? `${displayName(dev, lang)} · #${dev.num}` : info.uid48}</span>
+        {ownerLabel && <span className="cy-drive-banner__owner">{t('core.drive.owner', { owner: ownerLabel })}</span>}
         <span className="cy-drive-banner__hint">
-          <Kbd>{lang === 'tr' ? 'Boşluk' : 'Space'}</Kbd> {t('core.drive.estopHint')}
+          <Kbd>{t('core.drive.estopKeys')}</Kbd> {t('core.drive.estopHint')}
         </span>
+        {onGoToOwner && (
+          <Button size="sm" variant="secondary" onClick={onGoToOwner}>
+            {t('core.drive.goToOwner')}
+          </Button>
+        )}
         <Button size="sm" variant="danger" icon={Square} onClick={() => drive.stopSession('released')}>
           {t('core.drive.disarm')}
         </Button>

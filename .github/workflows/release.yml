@@ -9,7 +9,12 @@ permissions:
   contents: write
 
 jobs:
+  # Never package what does not pass CI (typecheck, tests, C tests, cargo check/clippy).
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:

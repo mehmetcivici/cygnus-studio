@@ -15,7 +15,7 @@ export type DriveStopReason =
   | 'preempted';
 
 /** Why `arm()` refused. Messages under `core.drive.block.*`. */
-export type ArmBlock = 'estopLatched' | 'notConnected' | 'deviceOffline' | 'deviceFault' | 'notSupported' | 'ended' | 'otherOwner';
+export type ArmBlock = 'estopLatched' | 'notConnected' | 'recovery' | 'deviceOffline' | 'deviceFault' | 'notSupported' | 'ended' | 'otherOwner';
 
 export interface DriveInfo {
   id: number;
@@ -24,6 +24,11 @@ export interface DriveInfo {
   uid48: string;
   armed: boolean;
   armedAt: number | null;
+  /**
+   * Increments on every successful `arm()` of this session. Screens key their command state on
+   * it so each arming starts from a neutral target, never from the last one.
+   */
+  armGeneration: number;
 }
 
 export interface DriveState {
@@ -39,13 +44,17 @@ export const useDrive = create<DriveState>(() => ({ session: null, estopLatched:
 
 export interface DriveEnv {
   resolve(uid48: string): DeviceHandle | undefined;
+  /** The link is up and can carry frames (false once it is lost). */
   isConnected(): boolean;
   /** Current status of a board as the store sees it. */
   statusOf(uid48: string): DeviceStatus | undefined;
   now(): number;
+  /** Recovery mode is broadcasting: boards may drop into their bootloader at any moment. */
+  recoveryActive?(): boolean;
 }
 
 type StopListener = (reason: DriveStopReason) => void;
+type ArmListener = (generation: number) => void;
 
 /**
  * Handle given to the screen that drives an actuator. Pattern:
@@ -55,6 +64,7 @@ type StopListener = (reason: DriveStopReason) => void;
  */
 export class DriveSession {
   private readonly stopListeners = new Set<StopListener>();
+  private readonly armListeners = new Set<ArmListener>();
   private ended = false;
 
   constructor(
@@ -77,11 +87,25 @@ export class DriveSession {
     return this.ctl.env.resolve(this.uid48);
   }
 
+  /** Number of times this session was armed (0 = never). See `DriveInfo.armGeneration`. */
+  get armGeneration(): number {
+    const s = this.ctl.state().session;
+    return s?.id === this.id ? s.armGeneration : 0;
+  }
+
   arm(): { ok: true } | { ok: false; reason: ArmBlock } {
     if (!this.active) return { ok: false, reason: 'ended' };
     const block = this.ctl.armBlock(this.uid48);
     if (block) return { ok: false, reason: block };
     this.ctl.setArmed(this.id, true);
+    const gen = this.armGeneration;
+    for (const cb of this.armListeners) {
+      try {
+        cb(gen);
+      } catch (e) {
+        console.error('[drive] arm listener failed', e);
+      }
+    }
     return { ok: true };
   }
 
@@ -97,12 +121,28 @@ export class DriveSession {
     this.ended = true;
     this.ctl.drop(this.id);
     this.stopListeners.clear();
+    this.armListeners.clear();
   }
 
-  /** Runs on every stop while armed, before the board gets its neutral command. */
-  onStop(cb: StopListener): () => void {
+  /**
+   * Runs on every stop while armed (manual, focus loss, E-STOP, link/board loss …), before the
+   * board gets its neutral command. Reset the screen's target to neutral here: re-arming must
+   * start from zero, never resume the last command.
+   */
+  onDisarm(cb: StopListener): () => void {
     this.stopListeners.add(cb);
     return () => this.stopListeners.delete(cb);
+  }
+
+  /** Same as `onDisarm` (older name). */
+  onStop(cb: StopListener): () => void {
+    return this.onDisarm(cb);
+  }
+
+  /** Runs right after each successful `arm()`, with the new `armGeneration`. */
+  onArm(cb: ArmListener): () => void {
+    this.armListeners.add(cb);
+    return () => this.armListeners.delete(cb);
   }
 
   /** @internal */
@@ -150,13 +190,14 @@ export class DriveController {
     }
     const s = new DriveSession(this, ++this.seq, owner, uid48);
     this.current = s;
-    this.store.setState({ session: { id: s.id, owner, uid48, armed: false, armedAt: null } });
+    this.store.setState({ session: { id: s.id, owner, uid48, armed: false, armedAt: null, armGeneration: 0 } });
     return s;
   }
 
   armBlock(uid48: string): ArmBlock | null {
     if (this.state().estopLatched) return 'estopLatched';
     if (!this.env.isConnected()) return 'notConnected';
+    if (this.env.recoveryActive?.()) return 'recovery';
     const h = this.env.resolve(uid48);
     if (!h || !h.online) return 'deviceOffline';
     if (!h.capabilities.control) return 'notSupported';
@@ -168,7 +209,9 @@ export class DriveController {
   setArmed(id: number, armed: boolean): void {
     const s = this.state().session;
     if (!s || s.id !== id) return;
-    this.store.setState({ session: { ...s, armed, armedAt: armed ? this.env.now() : null } });
+    this.store.setState({
+      session: { ...s, armed, armedAt: armed ? this.env.now() : null, armGeneration: armed ? s.armGeneration + 1 : s.armGeneration },
+    });
   }
 
   /** Stops the armed session (if any) for `reason`. */
@@ -178,10 +221,12 @@ export class DriveController {
     if (!cur || !info?.armed) return;
     this.setArmed(info.id, false);
     cur.fireStop(reason);
-    // A dead link or a vanished board cannot take frames; the host already halted its loop.
-    if (reason !== 'disconnected' && reason !== 'deviceLost') {
+    // Neutral whenever the frame can still reach the board: also on a user-initiated disconnect
+    // (cut while the link is still up). Only a dead link or a vanished board is skipped.
+    const dev = cur.device;
+    if (dev && dev.online && this.env.isConnected()) {
       try {
-        cur.device?.control.stop();
+        dev.control.stop();
       } catch (e) {
         console.error('[drive] control.stop failed', e);
       }

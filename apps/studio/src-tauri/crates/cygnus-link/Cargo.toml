@@ -8,3 +8,5 @@ rust-version = "1.77"
 [dependencies]
 serialport = { version = "4", default-features = true }
 serde = { version = "1", features = ["derive"] }
+# Already in the app's dependency tree (tokio); used only for TCP keepalive tuning.
+socket2 = "0.6"

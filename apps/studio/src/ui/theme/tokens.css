@@ -42,9 +42,11 @@
   --cy-danger: #f2685b;
   --cy-danger-soft: rgba(242, 104, 91, 0.15);
   --cy-danger-strong: #e0483a;
+  /* Solid fill under white text (armed button, danger hover, E-STOP): ≥ 4.5:1 with #fff (WCAG AA). */
+  --cy-danger-fill: #c62f22;
   --cy-offline: #5d7192;
-  --cy-estop: #d93a2b;
-  --cy-estop-hover: #ec4a3a;
+  --cy-estop: #c62f22;
+  --cy-estop-hover: #b8271a;
 
   /* Chart palette: ordered for maximum adjacent contrast on the dark panel. */
   --cy-chart-1: #4fc3ea;
@@ -88,19 +90,21 @@
   --cy-text-disabled: #9aa9bf;
   --cy-text-on-accent: #ffffff;
 
-  --cy-accent: #0b7fae;
-  --cy-accent-hover: #096d96;
+  /* AA (≥ 4.5:1) on panel, panel-2 and bg for small text. */
+  --cy-accent: #0a72a0;
+  --cy-accent-hover: #085f85;
   --cy-accent-soft: rgba(11, 127, 174, 0.1);
   --cy-accent-line: rgba(11, 127, 174, 0.4);
-  --cy-ok: #16904d;
+  --cy-ok: #0f7a40;
   --cy-ok-soft: rgba(22, 144, 77, 0.11);
-  --cy-warn: #a87b00;
+  --cy-warn: #8a6500;
   --cy-warn-soft: rgba(212, 160, 0, 0.14);
-  --cy-caution: #c25a12;
+  --cy-caution: #a84d0f;
   --cy-caution-soft: rgba(194, 90, 18, 0.11);
   --cy-danger: #cf3a2c;
   --cy-danger-soft: rgba(207, 58, 44, 0.1);
   --cy-danger-strong: #b52e21;
+  --cy-danger-fill: #b52e21;
   --cy-offline: #8c9bb2;
   --cy-estop: #d22f20;
   --cy-estop-hover: #b8271a;
@@ -129,8 +133,8 @@
   --cy-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* Type scale (px): tight, tool-like */
-  --cy-fs-2xs: 10.5px;
-  --cy-fs-xs: 11.5px;
+  --cy-fs-2xs: 11px;
+  --cy-fs-xs: 12px;
   --cy-fs-sm: 12.5px;
   --cy-fs-md: 13.5px;
   --cy-fs-lg: 15px;
@@ -161,8 +165,10 @@
   --cy-r-xl: 14px;
   --cy-r-full: 999px;
 
-  /* Control heights: md is glove-friendly but still dense */
-  --cy-h-sm: 26px;
+  /* Control heights: md is glove-friendly but still dense. Nothing clickable is smaller than
+     --cy-hit-min (components expand their hit area when the visual is smaller). */
+  --cy-hit-min: 28px;
+  --cy-h-sm: 28px;
   --cy-h-md: 32px;
   --cy-h-lg: 40px;
 

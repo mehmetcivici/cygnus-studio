@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-link-open-tcp"
+description = "Enables the link_open_tcp command without any pre-configured scope."
+commands.allow = ["link_open_tcp"]
+
+[[permission]]
+identifier = "deny-link-open-tcp"
+description = "Denies the link_open_tcp command without any pre-configured scope."
+commands.deny = ["link_open_tcp"]

@@ -77,7 +77,7 @@ describe('SignalHistory', () => {
 
 describe('SessionRecorder', () => {
   it('exports wide CSV with sample-and-hold columns', () => {
-    const store = create<RecorderState>(() => ({ recording: false, startedAt: null, stoppedAt: null, channels: [], samples: 0 }));
+    const store = create<RecorderState>(() => ({ recording: false, startedAt: null, stoppedAt: null, channels: [], samples: 0, statusFallback: [], lost: 0 }));
     const rec = new SessionRecorder(store, () => 0);
     const a = fakeDevice('a');
     const b = fakeDevice('b');
@@ -100,4 +100,59 @@ describe('SessionRecorder', () => {
     const json = JSON.parse(rec.toJSON()) as { channels: Array<{ v: number[] }> };
     expect(json.channels[0]?.v).toEqual([10, 12]);
   });
+
+  it('records high-rate stream samples and falls back to STATUS when no stream is possible', async () => {
+    const store = create<RecorderState>(() => ({ recording: false, startedAt: null, stoppedAt: null, channels: [], samples: 0, statusFallback: [], lost: 0 }));
+    const rec = new SessionRecorder(store, () => 0);
+    let push: ((t: number, v: Float32Array) => void) | null = null;
+    const closed: string[] = [];
+    const streamDev = {
+      uid48: 's',
+      def: { signals: [{ key: 'vel' }, { key: 'cur' }] },
+      capabilities: { stream: true },
+      onSignals: () => () => undefined,
+      stream: {
+        open: (o: { signals: readonly string[]; periodUs: number }) => {
+          expect(o).toEqual({ signals: ['vel', 'cur'], periodUs: 1000 });
+          return {
+            lost: 2,
+            onData: (cb: (t: number, v: Float32Array) => void) => {
+              push = cb;
+              return () => (push = null);
+            },
+            close: () => closed.push('s'),
+          };
+        },
+      },
+    };
+    const legacy = fakeDevice('l');
+    rec.setResolver((uid) => (uid === 's' ? (streamDev as unknown as DeviceHandle) : legacy.handle));
+    rec.start(
+      [
+        { uid48: 's', key: 'vel', label: '=cmd|calc' },
+        { uid48: 's', key: 'cur' },
+        { uid48: 'l', key: 'x' },
+      ],
+      { streamPeriodUs: 1000 },
+    );
+    expect(store.getState().statusFallback).toEqual(['l']);
+    const emit = push as ((t: number, v: Float32Array) => void) | null;
+    for (let i = 0; i < 5; i++) emit?.(1000 + i, new Float32Array([i, i * 10]));
+    rec.stop();
+    expect(closed).toEqual(['s']);
+    expect(store.getState().lost).toBe(2);
+    expect(rec.sampleCount).toBe(10);
+    const csv = await rec.exportCSV();
+    expect(csv).toBe(rec.toCSV());
+    const lines = csv.trim().split('\n');
+    // formula-looking titles are defused for spreadsheets (uygulama #14)
+    expect(lines[0]).toBe("time_s,'=cmd|calc,s.cur,l.x");
+    expect(lines).toHaveLength(6);
+    expect(lines[5]).toBe('0.0040,4,40,');
+    const json = JSON.parse(await rec.exportJSON({ note: 'x' })) as { note: string; channels: Array<{ t_ms: number[]; v: Array<number | null> }> };
+    expect(json.note).toBe('x');
+    expect(json.channels[1]?.v).toEqual([0, 10, 20, 30, 40]);
+    expect(json.channels[2]?.v).toEqual([]);
+  });
 });
+

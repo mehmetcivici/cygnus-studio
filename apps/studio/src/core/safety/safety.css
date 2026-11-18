@@ -38,8 +38,8 @@
   background: var(--cy-caution-soft);
 }
 .cy-arm.is-armed {
-  background: var(--cy-danger);
-  border-color: var(--cy-danger);
+  background: var(--cy-danger-fill);
+  border-color: var(--cy-danger-fill);
   color: #fff;
 }
 .cy-arm__icon {
@@ -82,7 +82,7 @@
 }
 .cy-drive-banner.is-armed {
   color: #fff;
-  background: repeating-linear-gradient(-45deg, var(--cy-danger) 0 14px, color-mix(in srgb, var(--cy-danger) 82%, #000) 14px 28px);
+  background: repeating-linear-gradient(-45deg, var(--cy-danger-fill) 0 14px, color-mix(in srgb, var(--cy-danger-fill) 82%, #000) 14px 28px);
   box-shadow: 0 0 0 1px var(--cy-danger), 0 0 18px color-mix(in srgb, var(--cy-danger) 40%, transparent);
   animation: cy-drive-pulse 1.6s ease-in-out infinite;
 }
@@ -107,7 +107,7 @@
 }
 .cy-drive-banner.is-armed .cy-btn {
   background: #fff;
-  color: var(--cy-danger);
+  color: var(--cy-danger-fill);
 }
 .cy-drive-banner.is-stopped {
   color: var(--cy-text-2);
@@ -123,4 +123,12 @@
   .cy-drive-banner.is-armed {
     animation: none;
   }
+}
+.cy-drive-banner__owner {
+  opacity: 0.92;
+}
+.cy-drive-banner.is-armed .cy-btn--secondary {
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.5);
 }

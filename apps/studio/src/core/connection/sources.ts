@@ -2,7 +2,8 @@
 
 /** Where the bus comes from. Only the serialisable fields are remembered between sessions. */
 export type ConnectionSource =
-  | { kind: 'sim'; scenarioId: string; seed?: number }
+  /** `assigned: false`: factory-fresh boards (vehicle wizard demos). */
+  | { kind: 'sim'; scenarioId: string; seed?: number; assigned?: boolean }
   /** `port` is a granted Web Serial port; without one the browser chooser is shown (needs a click). */
   | { kind: 'webserial'; port?: SerialPort; label?: string }
   | { kind: 'tauri-serial'; path: string; baud?: number; label?: string }
@@ -12,7 +13,7 @@ export type ConnectionKind = ConnectionSource['kind'];
 
 /** JSON-safe form kept in localStorage. */
 export type StoredSource =
-  | { kind: 'sim'; scenarioId: string }
+  | { kind: 'sim'; scenarioId: string; assigned?: false }
   | { kind: 'webserial'; label?: string }
   | { kind: 'tauri-serial'; path: string; baud?: number; label?: string }
   | { kind: 'roborio'; host: string; port?: number };
@@ -28,7 +29,7 @@ export const SIM_SEED = 1;
 export function toStored(s: ConnectionSource): StoredSource {
   switch (s.kind) {
     case 'sim':
-      return { kind: 'sim', scenarioId: s.scenarioId };
+      return s.assigned === false ? { kind: 'sim', scenarioId: s.scenarioId, assigned: false } : { kind: 'sim', scenarioId: s.scenarioId };
     case 'webserial':
       return s.label ? { kind: 'webserial', label: s.label } : { kind: 'webserial' };
     case 'tauri-serial':

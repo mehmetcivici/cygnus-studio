@@ -221,7 +221,7 @@
   height: 26px;
   padding: 0 10px;
   border-radius: var(--cy-r-full);
-  background: var(--cy-danger);
+  background: var(--cy-danger-fill);
   color: #fff;
   font-weight: 900;
   font-size: var(--cy-fs-xs);
@@ -267,4 +267,104 @@ button.cy-statusbar__item {
   .cy-rec svg {
     animation: none;
   }
+}
+
+/* ---------- Alert center ---------- */
+.cy-alertbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--cy-r-md);
+  background: none;
+  color: var(--cy-text-3);
+  cursor: pointer;
+}
+.cy-alertbtn:hover {
+  border-color: var(--cy-line);
+  background: var(--cy-hover);
+}
+.cy-alertbtn.is-warn {
+  color: var(--cy-warn);
+  border-color: color-mix(in srgb, var(--cy-warn) 45%, transparent);
+  background: var(--cy-warn-soft);
+}
+.cy-alertbtn.is-danger {
+  color: #fff;
+  background: var(--cy-danger-fill);
+  border-color: var(--cy-danger-fill);
+}
+.cy-alertbtn__count {
+  font-weight: 700;
+  font-size: var(--cy-fs-sm);
+}
+.cy-alerts__head {
+  font-weight: 700;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid var(--cy-line);
+}
+.cy-alerts__empty {
+  margin: 12px 4px;
+  color: var(--cy-text-3);
+}
+.cy-alerts__list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.cy-alerts__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 4px;
+  border-radius: var(--cy-r-sm);
+}
+.cy-alerts__row + .cy-alerts__row {
+  border-top: 1px solid var(--cy-line);
+}
+.cy-alerts__row.is-danger .cy-alerts__icon {
+  color: var(--cy-danger);
+}
+.cy-alerts__row.is-warn .cy-alerts__icon {
+  color: var(--cy-warn);
+}
+.cy-alerts__icon {
+  flex: none;
+  margin-top: 2px;
+}
+.cy-alerts__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text);
+}
+.cy-alerts__detail {
+  color: var(--cy-text-2);
+  font-size: var(--cy-fs-xs);
+}
+.cy-statusbar__item.is-warn {
+  color: var(--cy-warn);
+}
+.cy-statusbar__item.is-danger {
+  color: var(--cy-danger);
+}
+.cy-statusbar__item.is-info {
+  color: var(--cy-accent);
+}
+button.cy-statusbar__item {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
 }

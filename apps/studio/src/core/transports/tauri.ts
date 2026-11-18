@@ -67,10 +67,30 @@ function ensureClosedListener(): Promise<unknown> {
   return closedListener;
 }
 
+const OPEN_RETRIES = 3;
+const OPEN_RETRY_MS = 150;
+
 async function openLink(command: string, args: Record<string, unknown>): Promise<ByteStream> {
   const { invoke, Channel } = await tauriCore();
   await ensureClosedListener();
+  // The previous link to this port may still be releasing its exclusive lock (the shell closes
+  // stale links itself, but an OS driver can lag): retry briefly before giving up.
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= OPEN_RETRIES; attempt++) {
+    try {
+      return await openLinkOnce(invoke, Channel, command, args);
+    } catch (e) {
+      lastError = e;
+      if (!/lock|busy|denied/i.test(String(e)) || attempt === OPEN_RETRIES) break;
+      await new Promise((r) => setTimeout(r, OPEN_RETRY_MS * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
 
+type TauriCore = Awaited<ReturnType<typeof tauriCore>>;
+
+async function openLinkOnce(invoke: TauriCore['invoke'], Channel: TauriCore['Channel'], command: string, args: Record<string, unknown>): Promise<ByteStream> {
   let dataCb: ((chunk: Uint8Array) => void) | null = null;
   // Chunks that arrive before the consumer subscribes are kept so no byte is lost.
   const backlog: Uint8Array[] = [];
@@ -99,9 +119,15 @@ async function openLink(command: string, args: Record<string, unknown>): Promise
     closeHandlers.set(id, markClosed);
   }
 
+  // Every invoke is its own task in Tauri's async runtime: two un-awaited writes may reach the
+  // port in either order (a neutral frame overtaken by the last setpoint). Chain them.
+  let tail: Promise<void> = Promise.resolve();
   return {
-    async write(bytes: Uint8Array): Promise<void> {
-      await invoke('link_write', bytes, { headers: { [ID_HEADER]: String(id) } });
+    write(bytes: Uint8Array): Promise<void> {
+      const next = tail.then(() => invoke<void>('link_write', bytes, { headers: { [ID_HEADER]: String(id) } }));
+      // A failed write must not wedge the queue; the caller still sees its own rejection.
+      tail = next.catch(() => undefined);
+      return next;
     },
     onData(cb) {
       dataCb = cb;
@@ -115,6 +141,9 @@ async function openLink(command: string, args: Record<string, unknown>): Promise
       closeHandlers.delete(id);
       if (closed) return;
       closed = true;
+      // After queued writes (a final neutral frame must still go out), then wait for the
+      // shell to release the port before resolving.
+      await tail;
       await invoke('link_close', { id });
     },
   };

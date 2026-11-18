@@ -92,14 +92,16 @@
   color: var(--cy-danger);
 }
 .cy-btn--danger:hover:not(:disabled) {
-  background: var(--cy-danger);
-  border-color: var(--cy-danger);
+  background: var(--cy-danger-fill);
+  border-color: var(--cy-danger-fill);
   color: #fff;
 }
 
 /* Icon-only */
 .cy-btn--icon {
   width: var(--btn-h);
+  min-width: var(--cy-hit-min);
+  min-height: var(--cy-hit-min);
   padding: 0;
 }
 .cy-btn--icon.is-active {

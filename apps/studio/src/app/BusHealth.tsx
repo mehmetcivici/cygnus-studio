@@ -17,7 +17,7 @@ function Row({ label, value }: { label: string; value: string }) {
 
 /** Top bar: load %, frames/s and timeouts; click for the detail sheet. */
 export function BusHealth() {
-  const { fmtNumber, t } = useI18n();
+  const { fmtNumber, fmtPercent, t } = useI18n();
   const stats = useBusStats();
   const phase = useConnection((s) => s.phase);
   const fd = useConnection((s) => s.fd);
@@ -43,7 +43,7 @@ export function BusHealth() {
           <span className="cy-health__bar">
             <span style={{ width: `${Math.min(100, load)}%` }} />
           </span>
-          <span className="cy-mono">%{fmtNumber(load, 0)}</span>
+          <span className="cy-mono">{fmtPercent(load, 0)}</span>
         </span>
         <span className="cy-health__sep" />
         <span className="cy-mono">{fmtNumber(fps, 0)}</span>
@@ -59,7 +59,7 @@ export function BusHealth() {
       <Modal open={open} onClose={() => setOpen(false)} title={tShell('health.title')} size="sm">
         <div className="cy-health__sheet">
           <Row label={tShell('health.link')} value={fd ? tShell('health.fd') : tShell('health.classic')} />
-          <Row label={tShell('health.load')} value={`%${fmtNumber(load, 1)}`} />
+          <Row label={tShell('health.load')} value={fmtPercent(load, 1)} />
           <Row label={tShell('health.rx')} value={`${fmtNumber(stats.rxFps, 0)} ${tShell('health.fps')}`} />
           <Row label={tShell('health.tx')} value={`${fmtNumber(stats.txFps, 0)} ${tShell('health.fps')}`} />
           <Row label={tShell('health.rxTotal')} value={fmtNumber(stats.rxTotal, 0)} />

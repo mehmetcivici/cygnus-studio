@@ -1,4 +1,4 @@
-import type { DeviceHandle } from '@cygnus/protocol';
+import { DeviceState, type DeviceHandle } from '@cygnus/protocol';
 
 export interface ParamSnapshot {
   /** Value on the board as far as the host knows (undefined until read). */
@@ -22,9 +22,16 @@ interface Tap {
   entries: Map<string, Entry>;
   /** A `readAllParams` is running: single reads would only duplicate its traffic. */
   bulk: boolean;
+  /** Last seen `readable(handle)`, to retry once the board returns. */
+  wasReadable: boolean;
 }
 
 const EMPTY: ParamSnapshot = Object.freeze({ value: undefined, loading: false, error: null });
+
+/** The board answers parameter requests: online, past BOOT, not in the bootloader. */
+function readable(h: DeviceHandle): boolean {
+  return h.online && !h.bootloader && h.state !== DeviceState.BOOT && h.state !== DeviceState.BOOTLOADER && !h.unassigned && !h.conflict;
+}
 
 /**
  * Parameter values per (board, key) for React: seeded from the handle's cache, refreshed by
@@ -52,7 +59,7 @@ export class ParamCache {
   subscribe(uid48: string, key: string, listener: Listener): () => void {
     let tap = this.taps.get(uid48);
     if (!tap) {
-      tap = { handle: null, offs: [], entries: new Map(), bulk: false };
+      tap = { handle: null, offs: [], entries: new Map(), bulk: false, wasReadable: false };
       this.taps.set(uid48, tap);
     }
     let entry = tap.entries.get(key);
@@ -110,19 +117,32 @@ export class ParamCache {
         if (e) this.set(e, { value, loading: false, error: null });
       }),
       h.on('paramsInvalidated', () => {
+        // After a reboot the board is still in BOOT: ensureLoaded waits for it ('changed' below).
         for (const [key, e] of tap.entries) {
           this.set(e, { value: undefined, loading: false, error: null });
           this.ensureLoaded(tap, key, e);
         }
       }),
+      h.on('changed', () => {
+        // Board came back (rebooted, reconnected): errors from while it was away are stale.
+        const ok = readable(h);
+        if (ok && !tap.wasReadable) {
+          for (const [key, e] of tap.entries) {
+            if (e.snap.error && !e.inflight) this.set(e, { ...e.snap, error: null });
+            this.ensureLoaded(tap, key, e);
+          }
+        }
+        tap.wasReadable = ok;
+      }),
     );
+    tap.wasReadable = readable(h);
     for (const [key, e] of tap.entries) this.ensureLoaded(tap, key, e);
   }
 
   private ensureLoaded(tap: Tap, key: string, e: Entry): void {
     const h = tap.handle;
     if (!h || e.inflight || tap.bulk || e.snap.value !== undefined || e.snap.error) return;
-    if (!h.capabilities.params || !h.online || h.unassigned || h.conflict) return;
+    if (!h.capabilities.params || !readable(h)) return;
     e.inflight = true;
     this.set(e, { ...e.snap, loading: true });
     h.getParam(key).then(
@@ -132,7 +152,10 @@ export class ParamCache {
       },
       (error: unknown) => {
         e.inflight = false;
-        if (tap.handle === h) this.set(e, { value: h.cachedParam(key), loading: false, error });
+        if (tap.handle !== h) return;
+        // The board went away mid-read (reboot, cable): not a real failure, retry when it is back.
+        if (!readable(h)) this.set(e, { value: h.cachedParam(key), loading: false, error: null });
+        else this.set(e, { value: h.cachedParam(key), loading: false, error });
       },
     );
   }

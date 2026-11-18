@@ -1,8 +1,15 @@
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use socket2::{SockRef, TcpKeepalive};
+
 use crate::error::LinkError;
 use crate::manager::Endpoint;
+
+const READ_TIMEOUT: Duration = Duration::from_millis(20);
+const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(2);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 pub(crate) fn connect(host: &str, port: u16, timeout: Duration) -> Result<Endpoint, LinkError> {
     let addrs = (host, port)
@@ -25,6 +32,14 @@ pub(crate) fn connect(host: &str, port: u16, timeout: Duration) -> Result<Endpoi
     })?;
     // CAN frames are tiny and latency-sensitive; Nagle would batch them.
     stream.set_nodelay(true)?;
+    // Same polling as serial: the reader notices a user close without relying on shutdown().
+    stream.set_read_timeout(Some(READ_TIMEOUT))?;
+    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+    // A half-open connection (robot power or cable pulled, no FIN) would otherwise block forever
+    // and the UI would stay "connected"; keepalive probes turn it into a read error (2 s idle, then
+    // 1 s probes; the OS probe count applies, ≈ 10 s on Linux).
+    let ka = TcpKeepalive::new().with_time(KEEPALIVE_IDLE).with_interval(KEEPALIVE_INTERVAL);
+    SockRef::from(&stream).set_tcp_keepalive(&ka)?;
     let reader = stream.try_clone()?;
     let writer = stream.try_clone()?;
     Ok(Endpoint {

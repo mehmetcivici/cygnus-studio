@@ -56,9 +56,11 @@ export const tShell = registerMessages('shell', {
       link: 'Bağlantı',
     },
     status: {
-      devices: '{count} kart',
+      devices: '{online}/{count} kart çevrimiçi',
       unresolved: '{count} çözülmemiş kart',
       recording: 'Kayıt {time} · {samples} örnek',
+      ambient: 'Gösteri hareketi',
+      ambientHint: 'Simülatörde volan dışarıdan elle çevriliyor; bu bir motor komutu değil. Acil durdur ve sürüş sırasında kapanır.',
     },
     sim: {
       button: 'Simülatör',
@@ -127,6 +129,7 @@ export const tShell = registerMessages('shell', {
         hardware: 'Donanım arızası',
         selfTestFail: 'Öz-test başarısız',
         flashError: 'Flash yazma hatası',
+        brokenApp: 'Bozuk uygulama (açılmıyor)',
       },
     },
     estop: {
@@ -190,9 +193,11 @@ export const tShell = registerMessages('shell', {
       link: 'Link',
     },
     status: {
-      devices: '{count} board | {count} boards',
+      devices: '{online}/{count} board online | {online}/{count} boards online',
       unresolved: '{count} unresolved board | {count} unresolved boards',
       recording: 'Recording {time} · {samples} samples',
+      ambient: 'Demo motion',
+      ambientHint: 'In the simulator the flywheel is turned by hand from outside; not a motor command. Stops on E-STOP and while driving.',
     },
     sim: {
       button: 'Simulator',
@@ -261,6 +266,7 @@ export const tShell = registerMessages('shell', {
         hardware: 'Hardware failure',
         selfTestFail: 'Self-test failure',
         flashError: 'Flash write error',
+        brokenApp: "Broken application (won't start)",
       },
     },
     estop: {

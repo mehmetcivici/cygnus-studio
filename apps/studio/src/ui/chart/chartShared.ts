@@ -38,11 +38,34 @@ export interface BuildOptions {
   yRight: ChartScale;
   xUnit: string;
   onCursor: (u: uPlot) => void;
+  /** Logarithmic x axis (decades), e.g. Bode plots. Data must be > 0. */
+  xLog?: boolean;
+  /** Extra draw hook (markers, cursors) run after the series. */
+  onDraw?: (u: uPlot) => void;
 }
 
-function tickDigits(incr: number): number {
+/** Decimals needed to print every multiple of `incr` exactly (0.025 → 3, 0.5 → 1, 20 → 0). */
+export function tickDigits(incr: number): number {
   if (!Number.isFinite(incr) || incr <= 0) return 0;
-  return Math.max(0, Math.min(6, Math.ceil(-Math.log10(incr) - 1e-9)));
+  for (let d = 0; d <= 6; d++) {
+    const k = incr * 10 ** d;
+    if (Math.abs(k - Math.round(k)) < 1e-6 * Math.max(1, k)) return d;
+  }
+  return 6;
+}
+
+/** 1-2-5 tick steps from 1e-6 to 1e9: evenly readable labels (no 0,025 rounded to 0,03). */
+export const TICK_INCRS: number[] = (() => {
+  const out: number[] = [];
+  for (let e = -6; e <= 9; e++) for (const m of [1, 2, 5]) out.push(Number((m * 10 ** e).toPrecision(1)));
+  return out;
+})();
+
+/** Label for a log-axis tick: significant digits instead of a fixed step. */
+function logTickLabel(v: number, lang: 'tr' | 'en'): string {
+  const a = Math.abs(v);
+  const d = a >= 100 ? 0 : a >= 1 ? (Number.isInteger(v) ? 0 : 1) : Math.min(6, Math.ceil(-Math.log10(a)) + 1);
+  return fmtNumber(v, d, { lang, grouping: false });
 }
 
 function yRange(scale: ChartScale): uPlot.Range.Function {
@@ -103,9 +126,6 @@ export function buildOptions(o: BuildOptions): uPlot.Options {
       values: fmtTicks(''),
       size: 52,
       space: 32,
-      label: unitsLabel(o.series, 'left'),
-      labelSize: 14,
-      labelGap: 2,
     },
   ];
   if (hasRight) {
@@ -113,27 +133,47 @@ export function buildOptions(o: BuildOptions): uPlot.Options {
       ...baseAxis,
       scale: 'y2',
       side: 1,
+      incrs: TICK_INCRS,
       values: fmtTicks(''),
       size: 52,
       space: 32,
       grid: { show: false },
-      label: unitsLabel(o.series, 'right'),
-      labelSize: 14,
-      labelGap: 2,
     });
   }
 
   const scales: uPlot.Scales = {
-    x: { time: false, range: o.xRange },
+    x: o.xLog ? { time: false, distr: 3, log: 10, range: o.xRange } : { time: false, range: o.xRange },
     y: { auto: true, range: yRange(o.yLeft) },
   };
   if (hasRight) scales.y2 = { auto: true, range: yRange(o.yRight) };
 
+  // Units are written horizontally above each y axis (a rotated "V" reads like ">").
+  const leftUnit = unitsLabel(o.series, 'left');
+  const rightUnit = hasRight ? unitsLabel(o.series, 'right') : '';
+  const drawUnits = (u: uPlot): void => {
+    if (!leftUnit && !rightUnit) return;
+    const ctx = u.ctx;
+    const dpr = uPlot.pxRatio;
+    ctx.save();
+    ctx.font = labelFont.replace('10.5px', `${10.5 * dpr}px`);
+    ctx.fillStyle = axisColor;
+    ctx.textBaseline = 'bottom';
+    const y = u.bbox.top - 3 * dpr;
+    if (leftUnit) {
+      ctx.textAlign = 'left';
+      ctx.fillText(leftUnit, 2 * dpr, y);
+    }
+    if (rightUnit) {
+      ctx.textAlign = 'right';
+      ctx.fillText(rightUnit, u.ctx.canvas.width - 2 * dpr, y);
+    }
+    ctx.restore();
+  };
   return {
     width: o.width,
     height: o.height,
     pxAlign: 0,
-    padding: [10, hasRight ? 4 : 14, 0, 4],
+    padding: [leftUnit || rightUnit ? 18 : 10, hasRight ? 4 : 14, 0, 4],
     legend: { show: false },
     // Hovering near a trace highlights it; others stay readable.
     focus: { alpha: 0.35 },
@@ -158,7 +198,7 @@ export function buildOptions(o: BuildOptions): uPlot.Options {
         show: s.visible !== false,
       })),
     ],
-    hooks: { setCursor: [o.onCursor] },
+    hooks: { setCursor: [o.onCursor], draw: [drawUnits, ...(o.onDraw ? [o.onDraw] : [])] },
   };
 }
 

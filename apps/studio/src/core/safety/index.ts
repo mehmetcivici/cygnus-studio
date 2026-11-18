@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { DeviceState, type DeviceHandle } from '@cygnus/protocol';
 import { onEstop } from '../../app/estop';
-import { useNav } from '../../app/nav';
+import { navigate, setNavGuard, useNav } from '../../app/nav';
+import { toast } from '../../ui';
+import { t } from '../../i18n';
+import { DEMO_SCENARIO_ID } from '../connection/sources';
+import { confirmLeave, isBusy } from './busy';
 import { connection, useConnection } from '../connection/manager';
 import { useBusStore } from '../store/busStore';
 import { DriveController, useDrive, type DriveSession, type DriveStopReason } from './drive';
@@ -14,6 +18,7 @@ export const drive = new DriveController({
   isConnected: () => useConnection.getState().phase === 'connected',
   statusOf: (uid) => useBusStore.getState().byUid[uid]?.status,
   now: () => Date.now(),
+  recoveryActive: () => connection.current?.recovery.active ?? false,
 });
 
 /** Starts a drive session for `owner` on a board; null while another owner is armed. */
@@ -40,11 +45,78 @@ export async function clearEstop(): Promise<DeviceHandle[]> {
   return failed;
 }
 
+/**
+ * The link or the page is going away while a board is armed: neutral to that board first (the
+ * session stop), then an E-STOP broadcast so nothing keeps moving on its last command until the
+ * board's own timeout. Latches E-STOP locally, the user clears it after reconnecting.
+ * Returns true when something was armed.
+ */
+export function stopForTeardown(reason: 'disconnected' | 'hidden', bus = connection.current): boolean {
+  if (!drive.state().session?.armed) return false;
+  drive.cut(reason);
+  try {
+    bus?.estop();
+  } finally {
+    useDrive.setState({ estopLatched: true });
+  }
+  return true;
+}
+
+/** Demo motion (a hand-turned flywheel) must never look like a motor ignoring E-STOP. */
+function syncAmbient(): void {
+  const { estopLatched, session } = drive.state();
+  const conn = useConnection.getState();
+  const quiet = estopLatched || session?.armed === true;
+  if (quiet && conn.ambient) connection.setAmbient(false);
+  else if (!quiet && !conn.ambient && conn.phase === 'connected' && conn.sim && conn.source?.kind === 'sim' && conn.source.scenarioId === DEMO_SCENARIO_ID && ambientWanted) {
+    connection.setAmbient(true);
+  }
+}
+// The demo turns ambient on by itself; once the user switched it off explicitly we keep it off.
+let ambientWanted = true;
+export function setAmbientWanted(on: boolean): void {
+  ambientWanted = on;
+  if (on) syncAmbient();
+  else connection.setAmbient(false);
+}
+
 /** Installs the automatic cut-offs. Call once at startup. */
 export function installSafety(): () => void {
   const offs: Array<() => void> = [];
   const cut = (r: DriveStopReason) => () => drive.cut(r);
+  offs.push(
+    setNavGuard((screen, params) => {
+      if (!isBusy()) return true;
+      void confirmLeave('navigate').then((ok) => {
+        if (ok) navigate(screen, params, { force: true });
+      });
+      return false;
+    }),
+    connection.onBeforeTeardown((bus) => {
+      if (stopForTeardown('disconnected', bus)) toast.warn(t('core.drive.disconnectEstop'), { id: 'drive.teardown' });
+    }),
+    useDrive.subscribe((s, prev) => {
+      if (s.estopLatched !== prev.estopLatched || s.session?.armed !== prev.session?.armed) syncAmbient();
+    }),
+    useConnection.subscribe((s, prev) => {
+      // ambient was just switched on by the connection (demo start) while latched/armed
+      if (s.ambient && !prev.ambient) syncAmbient();
+    }),
+  );
   if (typeof window !== 'undefined') {
+    // The page dies (reload, close, navigation away): stop while frames can still go out.
+    const onPageHide = (): void => {
+      stopForTeardown('hidden');
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
+      if (isBusy() || drive.state().session?.armed) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    offs.push(() => window.removeEventListener('pagehide', onPageHide), () => window.removeEventListener('beforeunload', onBeforeUnload));
     const onBlur = cut('blur');
     const onVis = (): void => {
       if (document.visibilityState === 'hidden') drive.cut('hidden');
@@ -81,6 +153,12 @@ export function installSafety(): () => void {
 export interface UseDriveSession {
   session: DriveSession | null;
   armed: boolean;
+  /**
+   * Increments on every arming of this screen's session (0 before the first). Reset command state
+   * when it changes (`useEffect(() => setTarget(0), [armGeneration])`) so re-arming never resumes
+   * the previous target.
+   */
+  armGeneration: number;
   /** Another screen is armed and holds the actuators. */
   busyOwner: string | null;
 }
@@ -117,6 +195,7 @@ export function useDriveSession(owner: string, uid48: string | null | undefined)
   return {
     session: mine ? session : null,
     armed: mine && info?.armed === true,
+    armGeneration: mine && info ? info.armGeneration : 0,
     busyOwner: !mine && info?.armed ? info.owner : null,
   };
 }

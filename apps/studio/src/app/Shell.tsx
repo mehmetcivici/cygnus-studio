@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { CircleX, SearchX } from 'lucide-react';
 import { useI18n } from '../i18n';
-import { Button, EmptyState, Spinner } from '../ui';
+import { Button, EmptyState, Spinner, cx } from '../ui';
 import { findFeature } from '../features/registry';
 import { DEFAULT_SCREEN, useNav } from './nav';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -9,6 +9,8 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import { SimDrawer } from './sim/SimPanel';
+import { GlobalDriveBanner, useDriving } from './DriveFrame';
+import { BusyPrompt } from './BusyPrompt';
 import './shell.css';
 
 function Screen() {
@@ -52,15 +54,20 @@ function Screen() {
 
 /** Application frame: top bar, navigation rail, content, status bar. */
 export function Shell() {
+  const driving = useDriving();
   return (
     <div className="cy-shell">
       <TopBar />
       <Sidebar />
-      <main className="cy-shell__main">
-        <Screen />
+      <main className={cx('cy-shell__main', driving && 'is-driving')}>
+        <GlobalDriveBanner />
+        <div className="cy-shell__screen">
+          <Screen />
+        </div>
       </main>
       <StatusBar />
       <SimDrawer />
+      <BusyPrompt />
     </div>
   );
 }

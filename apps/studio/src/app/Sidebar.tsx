@@ -1,5 +1,5 @@
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 import { Tooltip, cx } from '../ui';
 import { readStored, writeStored } from '../lib/storage';
@@ -8,16 +8,32 @@ import { useNav } from './nav';
 
 const KEY = 'cy.nav.collapsed';
 
+const NARROW = '(max-width: 1200px)';
+
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => typeof matchMedia === 'function' && matchMedia(NARROW).matches);
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const mq = matchMedia(NARROW);
+    const on = (): void => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return narrow;
+}
+
 export function Sidebar() {
   const { t } = useI18n();
   const screen = useNav((s) => s.screen);
   const navigate = useNav((s) => s.navigate);
-  const [collapsed, setCollapsed] = useState(() => readStored(KEY) === '1');
+  const [stored, setStored] = useState(() => readStored(KEY));
+  const narrow = useNarrow();
+  // No explicit choice yet: collapse by itself on narrow windows (≤ 1200 px).
+  const collapsed = stored === '1' || (stored === null && narrow);
   const toggle = (): void => {
-    setCollapsed((c) => {
-      writeStored(KEY, c ? '0' : '1');
-      return !c;
-    });
+    const next = collapsed ? '0' : '1';
+    writeStored(KEY, next);
+    setStored(next);
   };
   return (
     <nav className={cx('cy-sidebar', collapsed && 'is-collapsed')} aria-label="Cygnus Studio">

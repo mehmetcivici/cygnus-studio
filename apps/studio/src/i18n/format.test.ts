@@ -50,3 +50,14 @@ describe('fmtHex', () => {
     expect(fmtHex(0x0a0403, 8, false)).toBe('000A0403');
   });
 });
+
+describe('fmtPercent (tasarim B23)', () => {
+  it('puts the sign where the language wants it', async () => {
+    const { fmtPercent } = await import('./format');
+    expect(fmtPercent(28, 0, { lang: 'tr' })).toBe('%28');
+    expect(fmtPercent(28, 0, { lang: 'en' })).toBe('28%');
+    expect(fmtPercent(12.5, 1, { lang: 'tr' })).toBe('%12,5');
+    expect(fmtPercent(0.283, 1, { lang: 'en', ratio: true })).toBe('28.3%');
+    expect(fmtPercent(null)).toBe('—');
+  });
+});

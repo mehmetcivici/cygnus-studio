@@ -58,14 +58,16 @@ pub fn list_serial_ports() -> Result<Vec<SerialPortEntry>, LinkError> {
 
 pub(crate) fn open(path: &str, baud: u32) -> Result<Endpoint, LinkError> {
     let mut port = serialport::new(path, baud).timeout(READ_TIMEOUT).open()?;
+    // serialport opens Unix ports exclusively (TIOCEXCL): a second app or a stale link cannot
+    // interleave frames, which is why `close()` must really release every handle.
     // Native-USB slcan firmwares (CDC) often wait for DTR before they start talking.
     let _ = port.write_data_terminal_ready(true);
     let writer = port.try_clone()?;
     Ok(Endpoint {
         reader: Box::new(port),
         writer: Box::new(writer),
-        // The reader thread polls its stop flag every READ_TIMEOUT; dropping the last
-        // handle (the writer, when the link is removed) releases the device.
+        // The reader thread polls its stop flag every READ_TIMEOUT; `close()` joins it and drops
+        // the writer, so both handles are gone (and the lock released) when close returns.
         closer: Box::new(|| {}),
     })
 }

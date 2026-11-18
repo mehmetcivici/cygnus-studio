@@ -54,6 +54,8 @@ a {
 :focus-visible {
   box-shadow: var(--cy-focus);
   border-radius: var(--cy-r-sm);
+  /* Transparent outline: invisible normally, drawn in forced-colors (Windows high contrast). */
+  outline: 2px solid transparent;
 }
 
 ::selection {

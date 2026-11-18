@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Release builds run the same gate first (release.yml → needs: test).
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -20,10 +22,14 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install system packages (libudev for the serialport crate)
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Install system packages (libudev for serialport, WebKitGTK for the Tauri shell)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -31,6 +37,16 @@ jobs:
 
       - run: npm ci
       - run: npm run typecheck
+      # The C bridge must exist before the TS cross-compatibility tests run.
+      - name: Firmware C tests + bridge
+        run: |
+          make -C firmware/cycan test
+          make -C firmware/cycan bridge
       - run: npm test
-      - run: make -C firmware/cycan test
-      - run: cargo test -p cygnus-link --manifest-path apps/studio/src-tauri/Cargo.toml
+      # The shell embeds the built frontend (frontendDist); cargo check/clippy need it present.
+      - run: npm run build -w @cygnus/studio
+      - name: Tauri shell compiles (cargo check)
+        run: cargo check --workspace --all-targets --locked --manifest-path apps/studio/src-tauri/Cargo.toml
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --locked --manifest-path apps/studio/src-tauri/Cargo.toml -- -D warnings
+      - run: cargo test --workspace --locked --manifest-path apps/studio/src-tauri/Cargo.toml

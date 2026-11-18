@@ -27,6 +27,8 @@
   opacity: 0.5;
 }
 .cy-seg__item {
+  position: relative;
+  min-width: var(--cy-hit-min);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -64,4 +66,11 @@
 }
 .cy-seg__item:disabled {
   cursor: not-allowed;
+}
+
+/* Small segments are visually 22 px tall; the hit area reaches --cy-hit-min through the padding. */
+.cy-seg__item::after {
+  content: '';
+  position: absolute;
+  inset: -4px 0;
 }

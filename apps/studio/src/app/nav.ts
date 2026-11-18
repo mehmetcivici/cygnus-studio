@@ -4,12 +4,25 @@ export type NavParams = Readonly<Record<string, string>>;
 
 export const DEFAULT_SCREEN = 'bus';
 
+/** Returns false to cancel a navigation (e.g. a firmware update is running). */
+export type NavGuard = (screen: string, params: NavParams) => boolean;
+let guard: NavGuard | null = null;
+
+/** Installs the single navigation guard (core busy locks). Returns an uninstall function. */
+export function setNavGuard(g: NavGuard | null): () => void {
+  guard = g;
+  return () => {
+    if (guard === g) guard = null;
+  };
+}
+
 interface NavState {
   /** Active screen id (a feature id, e.g. `tuner`). */
   screen: string;
   /** Optional screen parameters, e.g. `{ device: 'esc80-3' }`. */
   params: NavParams;
-  navigate: (screen: string, params?: NavParams) => void;
+  /** `force` skips the guard (used after the user confirmed leaving). */
+  navigate: (screen: string, params?: NavParams, opts?: { force?: boolean }) => void;
 }
 
 /** Parses `#/tuner?device=esc-3` → `{ screen: 'tuner', params: { device: 'esc-3' } }`. */
@@ -39,9 +52,17 @@ function sameParams(a: NavParams, b: NavParams): boolean {
  */
 export const useNav = create<NavState>((set, get) => ({
   ...(typeof location !== 'undefined' ? parseHash(location.hash) : { screen: DEFAULT_SCREEN, params: {} }),
-  navigate: (screen, params = {}) => {
+  navigate: (screen, params = {}, opts = {}) => {
     const cur = get();
     if (cur.screen === screen && sameParams(cur.params, params)) return;
+    if (!opts.force && guard && !guard(screen, params)) {
+      // Cancelled: undo a back/forward or hand-edited hash so the URL matches the screen.
+      if (typeof location !== 'undefined') {
+        const h = formatHash(cur.screen, cur.params);
+        if (location.hash !== h) history.replaceState(null, '', h);
+      }
+      return;
+    }
     set({ screen, params });
     if (typeof location !== 'undefined') {
       const h = formatHash(screen, params);
@@ -50,8 +71,8 @@ export const useNav = create<NavState>((set, get) => ({
   },
 }));
 
-export function navigate(screen: string, params?: NavParams): void {
-  useNav.getState().navigate(screen, params);
+export function navigate(screen: string, params?: NavParams, opts?: { force?: boolean }): void {
+  useNav.getState().navigate(screen, params, opts);
 }
 
 /** Keeps the store in sync with back/forward and manual hash edits. */

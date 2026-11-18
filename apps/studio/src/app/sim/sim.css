@@ -185,7 +185,7 @@
   cursor: pointer;
 }
 .cy-simchip:hover {
-  background: var(--cy-danger);
+  background: var(--cy-danger-fill);
   color: #fff;
 }
 .cy-simmech {

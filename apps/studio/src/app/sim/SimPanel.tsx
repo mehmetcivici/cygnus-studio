@@ -32,7 +32,7 @@ import {
   cx,
   type DeviceStatus,
 } from '../../ui';
-import { LEGACY_MODEL_NAME, connection, useConnection, useSimulation } from '../../core';
+import { LEGACY_MODEL_NAME, connection, setAmbientWanted, useConnection, useSimulation } from '../../core';
 import { ModelIcon } from '../../core/components';
 import { scenarioInfo } from '../connect';
 import { tShell } from '../messages';
@@ -314,7 +314,7 @@ function AddBoard({ sim }: { sim: Simulation }) {
 
 /** Right-hand drawer: the "wizard's curtain" for demos. */
 export function SimDrawer() {
-  const { tl, fmtNumber } = useI18n();
+  const { t, tl, fmtNumber } = useI18n();
   const open = useSimPanel((s) => s.open);
   const sim = useSimulation();
   const speed = useConnection((s) => s.simSpeed);
@@ -342,7 +342,7 @@ export function SimDrawer() {
           </h2>
           <p>{info ? tl(info.name) : ''} · {tShell('sim.time')} <span className="cy-mono">{fmtNumber(snap.timeMs / 1000, 1)} s</span></p>
         </div>
-        <IconButton icon={X} label={tShell('sim.title')} onClick={() => useSimPanel.setState({ open: false })} noTooltip />
+        <IconButton icon={X} label={t('common.close')} onClick={() => useSimPanel.setState({ open: false })} noTooltip />
       </header>
       <div className="cy-simp__body">
         <p className="cy-simp__muted">{tShell('sim.subtitle')}</p>
@@ -356,7 +356,7 @@ export function SimDrawer() {
             ariaLabel={tShell('sim.speed')}
           />
         </div>
-        <Toggle checked={ambient} onChange={(c) => connection.setAmbient(c)} label={tShell('sim.ambient')} size="sm" />
+        <Toggle checked={ambient} onChange={(c) => setAmbientWanted(c)} label={tShell('sim.ambient')} size="sm" />
 
         <Section title={tShell('sim.bus')}>
           <label className="cy-simp__field">

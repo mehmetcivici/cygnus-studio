@@ -226,9 +226,36 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   background:
     radial-gradient(1200px 500px at 85% -10%, color-mix(in srgb, var(--cy-accent) 5%, transparent), transparent 60%),
     var(--cy-bg);
+}
+.cy-shell__screen {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.cy-shell__drive:empty {
+  display: none;
+}
+.cy-shell__drive {
+  padding: 8px 10px 0;
+}
+.cy-shell__drive .cy-drive-banner {
+  border-radius: var(--cy-r-md);
+}
+/* Armed anywhere: the whole content area gets a loud frame, on top of every screen. */
+.cy-shell__main.is-driving::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--cy-danger);
+  box-shadow: inset 0 0 24px color-mix(in srgb, var(--cy-danger) 35%, transparent);
+  pointer-events: none;
+  z-index: 50;
 }
 .cy-shell__loading {
   display: grid;

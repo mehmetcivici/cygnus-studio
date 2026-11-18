@@ -4,7 +4,7 @@ import 'uplot/dist/uPlot.min.css';
 import './chart.css';
 import { Maximize2 } from 'lucide-react';
 import { currentLang, fmtNumber, fmtValue, t as translate, useI18n } from '../../i18n';
-import { useTheme } from '../theme/theme';
+import { resolveColor, useTheme } from '../theme/theme';
 import { IconButton } from '../components/IconButton';
 import { ChartLegend } from './ChartLegend';
 import {
@@ -24,6 +24,16 @@ export interface StaticSeries extends ChartSeriesStyle {
   y: ArrayLike<number>;
 }
 
+/** Vertical marker line (cursor A/B, event) at an x value. */
+export interface ChartMarker {
+  x: number;
+  /** Short tag drawn at the top ("A", "B", "−3 dB"). */
+  label?: string;
+  /** Token name (`accent`, `warn`, `chart-3` …) or CSS color; default the axis color. */
+  color?: string;
+  dashed?: boolean;
+}
+
 export interface StaticChartProps {
   /**
    * Series may have different x arrays (e.g. overlaid tuner runs, each starting
@@ -39,6 +49,15 @@ export interface StaticChartProps {
   actions?: ReactNode;
   height?: number;
   xUnit?: string;
+  /** `log`: logarithmic x axis (Bode, spectra); zoom/pan work in decades. x must be > 0. */
+  xScale?: 'linear' | 'log';
+  /** Vertical cursor/marker lines. Pass a stable array (memoised). */
+  markers?: readonly ChartMarker[];
+  /**
+   * Click (without dragging) on the plot: x value under the pointer. Use it to place cursors:
+   * `onPick={(x, e) => (e.shiftKey ? setB(x) : setA(x))}`.
+   */
+  onPick?: (x: number, e: MouseEvent) => void;
   className?: string;
 }
 
@@ -55,16 +74,53 @@ function alignData(series: readonly StaticSeries[]): uPlot.AlignedData {
   return uPlot.join(series.map((s) => [toColumn(s.x), toColumn(s.y)]));
 }
 
-function extent(series: readonly StaticSeries[]): [number, number] {
+function extent(series: readonly StaticSeries[], log = false): [number, number] {
   let lo = Infinity;
   let hi = -Infinity;
   for (const s of series) {
     const n = s.x.length;
-    if (!n) continue;
-    lo = Math.min(lo, s.x[0] ?? lo);
-    hi = Math.max(hi, s.x[n - 1] ?? hi);
+    for (let i = 0; i < n; i++) {
+      const x = s.x[i] ?? NaN;
+      if (log && !(x > 0)) continue;
+      lo = Math.min(lo, x);
+      break;
+    }
+    if (n) hi = Math.max(hi, s.x[n - 1] ?? hi);
   }
-  return Number.isFinite(lo) && hi > lo ? [lo, hi] : [0, 1];
+  if (Number.isFinite(lo) && hi > lo) return [lo, hi];
+  return log ? [1, 10] : [0, 1];
+}
+
+/** Zoom/pan coordinates: linear, or log10 for a log axis (so a wheel step is the same in every decade). */
+const fwd = (log: boolean, v: number): number => (log ? Math.log10(v) : v);
+const inv = (log: boolean, v: number): number => (log ? 10 ** v : v);
+
+function drawMarkers(u: uPlot, markers: readonly ChartMarker[] | undefined): void {
+  if (!markers?.length) return;
+  const ctx = u.ctx;
+  const dpr = uPlot.pxRatio;
+  const { left, top, width, height } = u.bbox;
+  ctx.save();
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.font = `700 ${10.5 * dpr}px Lato, sans-serif`;
+  ctx.textBaseline = 'top';
+  for (const m of markers) {
+    const x = u.valToPos(m.x, 'x', true);
+    if (!Number.isFinite(x) || x < left || x > left + width) continue;
+    const color = resolveColor(m.color ?? 'chart-axis');
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.setLineDash(m.dashed ? [4 * dpr, 3 * dpr] : []);
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, top + height);
+    ctx.stroke();
+    if (m.label) {
+      ctx.textAlign = x > left + width - 40 * dpr ? 'right' : 'left';
+      ctx.fillText(m.label, x + (ctx.textAlign === 'right' ? -4 : 4) * dpr, top + 2 * dpr);
+    }
+  }
+  ctx.restore();
 }
 
 /**
@@ -82,8 +138,18 @@ export function StaticChart({
   actions,
   height,
   xUnit = 's',
+  xScale = 'linear',
+  markers,
+  onPick,
   className,
 }: StaticChartProps) {
+  const log = xScale === 'log';
+  const xUnitRef = useRef(xUnit);
+  xUnitRef.current = xUnit;
+  const markersRef = useRef(markers);
+  markersRef.current = markers;
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
   const { t, lang } = useI18n();
   const theme = useTheme((s) => s.theme);
   const plotRef = useRef<HTMLDivElement>(null);
@@ -95,7 +161,7 @@ export function StaticChart({
   );
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
-  const full = useMemo(() => extent(series), [series]);
+  const full = useMemo(() => extent(series, log), [series, log]);
   const view = useRef<[number, number]>(full);
   const valueEls = useRef<(HTMLSpanElement | null)[]>([]);
   const headerEl = useRef<HTMLSpanElement | null>(null);
@@ -104,7 +170,7 @@ export function StaticChart({
     const l = currentLang();
     if (headerEl.current) {
       headerEl.current.textContent =
-        at === null ? translate('ui.chart.cursor') : `${translate('ui.chart.cursor')} · ${fmtNumber(at, 3, { lang: l, grouping: false })} s`;
+        at === null ? translate('ui.chart.cursor') : `${translate('ui.chart.cursor')} · ${fmtNumber(at, 3, { lang: l, grouping: false })} ${xUnitRef.current}`;
     }
     seriesRef.current.forEach((s, i) => {
       const el = valueEls.current[i];
@@ -119,9 +185,9 @@ export function StaticChart({
 
   const resetView = useCallback(() => {
     const u = uRef.current;
-    view.current = extent(seriesRef.current);
+    view.current = extent(seriesRef.current, log);
     u?.setScale('x', { min: view.current[0], max: view.current[1] });
-  }, []);
+  }, [log]);
 
   useEffect(() => {
     view.current = full;
@@ -139,10 +205,12 @@ export function StaticChart({
       yLeft,
       yRight,
       xUnit,
+      xLog: log,
       onCursor: (u) => {
         const left = u.cursor.left ?? -1;
         writeLegend(left >= 0 ? u.posToVal(left, 'x') : null);
       },
+      onDraw: (u) => drawMarkers(u, markersRef.current),
     });
     const u = new uPlot(opts, alignData(ss), el);
     uRef.current = u;
@@ -150,27 +218,58 @@ export function StaticChart({
     const apply = (): void => u.setScale('x', { min: view.current[0], max: view.current[1] });
     const detach = attachInteractions(u, {
       zoom: (factor, at) => {
-        const [a, b] = view.current;
-        const c = Number.isFinite(at) ? at : (a + b) / 2;
-        view.current = [c - (c - a) * factor, c + (b - c) * factor];
+        const a = fwd(log, view.current[0]);
+        const b = fwd(log, view.current[1]);
+        const c = Number.isFinite(at) && (!log || at > 0) ? fwd(log, at) : (a + b) / 2;
+        view.current = [inv(log, c - (c - a) * factor), inv(log, c + (b - c) * factor)];
         apply();
       },
       pan: (dt) => {
-        const [a, b] = view.current;
-        view.current = [a + dt, b + dt];
+        if (log) {
+          // dt arrives in data units across the visible span; convert to a decade shift.
+          const width = u.over.clientWidth || 1;
+          const span = (u.scales.x?.max ?? 1) - (u.scales.x?.min ?? 0);
+          const px = (dt / (span || 1)) * width;
+          const a = fwd(true, view.current[0]);
+          const b = fwd(true, view.current[1]);
+          const d = (px / width) * (b - a);
+          view.current = [inv(true, a + d), inv(true, b + d)];
+        } else {
+          const [a, b] = view.current;
+          view.current = [a + dt, b + dt];
+        }
         apply();
         return true;
       },
       reset: resetView,
     });
+    // A click that did not drag picks an x (cursor placement).
+    let downX: number | null = null;
+    const onDown = (e: MouseEvent): void => {
+      downX = e.clientX;
+    };
+    const onClick = (e: MouseEvent): void => {
+      if (downX === null || Math.abs(e.clientX - downX) > 3 || !pickRef.current) return;
+      const rect = u.over.getBoundingClientRect();
+      pickRef.current(u.posToVal(e.clientX - rect.left, 'x'), e);
+    };
+    u.over.addEventListener('mousedown', onDown);
+    u.over.addEventListener('click', onClick);
     const unobserve = observeSize(el, (w, h) => u.setSize({ width: w, height: h }));
     return () => {
       unobserve();
       detach();
+      u.over.removeEventListener('mousedown', onDown);
+      u.over.removeEventListener('click', onClick);
       u.destroy();
       uRef.current = null;
     };
-  }, [series, scaleSig, theme, lang, xUnit, writeLegend, resetView]);
+  }, [series, scaleSig, theme, lang, xUnit, log, writeLegend, resetView]);
+
+  // Markers change without rebuilding the plot.
+  useEffect(() => {
+    uRef.current?.redraw(false, false);
+  }, [markers]);
 
   const toggle = useCallback((key: string) => {
     setHidden((prev) => {
