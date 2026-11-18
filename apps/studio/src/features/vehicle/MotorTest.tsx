@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, TriangleAlert } from "lucide-react";
+import { ArrowLeftRight, CircleCheck, Play, Shuffle, TriangleAlert } from "lucide-react";
 import type { SlotBinding, VehicleSlot } from "@cygnus/vehicles";
 import {
   ArmButton,
@@ -7,11 +7,11 @@ import {
   useDevice,
   useDriveSession,
 } from "../../core";
+import { useI18n } from "../../i18n";
 import { Button, Checkbox, toast } from "../../ui";
+import { TEST_DUTY, runMotorTest, type TestPlan } from "./motorTest";
+import { draft } from "./store";
 import { tVehicle } from "./messages";
-
-const TEST_MS = 1000;
-const TEST_DUTY = 0.1;
 
 /** Low-power pulse for a servo-board channel, by what the channel drives. */
 export function testPulse(slot: VehicleSlot, invert: boolean): number {
@@ -26,6 +26,8 @@ export function testPulse(slot: VehicleSlot, invert: boolean): number {
   }
 }
 
+export type TestAnswer = "ok" | "reversed" | "otherWheel";
+
 export interface MotorTestProps {
   slot: VehicleSlot;
   binding: SlotBinding | undefined;
@@ -33,78 +35,76 @@ export interface MotorTestProps {
   propellers: boolean;
   /** Direction tweak from the wizard, so the test shows the direction the vehicle will get. */
   invert?: boolean;
-  onDone?: () => void;
+  /** The user answered "did the right wheel turn the right way?". */
+  onAnswer?: (answer: TestAnswer) => void;
 }
 
 /**
  * Runs the slot for one second at low power through the shared drive session (hold-to-arm,
- * automatic cut-offs). A servo-board channel gets a single test pulse on its own channel.
+ * automatic cut-offs), then asks whether the right wheel turned the right way and fixes the
+ * assignment or direction from the answer.
  */
 export function MotorTest({
   slot,
   binding,
   propellers,
   invert = false,
-  onDone,
+  onAnswer,
 }: MotorTestProps) {
+  const { tl } = useI18n();
   const uid = binding && binding.kind !== "external" ? binding.uid48 : null;
   const view = useDevice(uid);
   const { session, armed, busyOwner } = useDriveSession("vehicle", uid);
   const [ack, setAck] = useState(false);
   const [running, setRunning] = useState(false);
-  const stopRef = useRef<(() => void) | null>(null);
+  const [asking, setAsking] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => () => stopRef.current?.(), []);
-  useEffect(
-    () =>
-      session?.onStop(() => {
-        stopRef.current?.();
-      }),
-    [session],
-  );
+  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => session?.onDisarm(() => abortRef.current?.abort()), [session]);
+  // A new slot or binding is a new question.
+  useEffect(() => setAsking(false), [slot.id, uid]);
 
   if (!binding || binding.kind === "external")
     return <p className="vh-dim vh-small">{tVehicle("test.notSupported")}</p>;
   const unnumbered = !!view && (view.unassigned || view.conflict);
   const pulse = binding.kind === "channel" ? testPulse(slot, invert) : 0;
+  const plan: TestPlan =
+    binding.kind === "channel"
+      ? { kind: "channel", channel: binding.channel, pulseUs: pulse }
+      : { kind: "duty", duty: invert ? -TEST_DUTY : TEST_DUTY };
 
   const run = async (): Promise<void> => {
     const d = session?.device;
     if (!session || !d || !armed) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
     setRunning(true);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (): void => {
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-      stopRef.current = null;
-      d.control.stop();
-      setRunning(false);
-      session.disarm();
-      onDone?.();
-    };
+    setAsking(false);
     try {
-      if (binding.kind === "channel") {
-        const ch = binding.channel;
-        // A factory-fresh channel does not pulse until enabled; the plan enables it for good later.
-        if (d.cachedParam(`ch.${ch}.enable`) !== 1)
-          await d.setParam(`ch.${ch}.enable`, 1);
-        const first = Math.floor((ch - 1) / 4) * 4 + 1;
-        const pulses = [0, 0, 0, 0];
-        pulses[ch - first] = pulse;
-        d.control.send(
-          `channels_${first}_${first + 3}`,
-          { pulsesUs: pulses },
-          { repeat: true },
-        );
-      } else {
-        d.control.start("duty", invert ? -TEST_DUTY : TEST_DUTY);
-      }
-      stopRef.current = finish;
-      timer = setTimeout(finish, TEST_MS);
+      // The runner's own disarm at the end also fires onDisarm (and aborts): only its result counts.
+      const out = await runMotorTest(session, d, plan, ac.signal);
+      if (out === "done") setAsking(true);
     } catch (e) {
-      finish();
       toast.error(tVehicle("test.failed"), { description: describeError(e) });
+    } finally {
+      if (abortRef.current === ac) abortRef.current = null;
+      setRunning(false);
     }
+  };
+
+  const answer = (a: TestAnswer): void => {
+    setAsking(false);
+    if (a === "reversed") {
+      draft.setTweak(slot.id, { invert: invert ? undefined : true });
+      toast.info(tVehicle("test.reversedDone"), { description: tVehicle("test.retryHint") });
+    } else if (a === "otherWheel") {
+      draft.unbind(slot.id);
+      draft.select(slot.id);
+      draft.setStep("assign");
+      toast.warn(tVehicle("test.otherWheelDone", { slot: tl(slot.label) }));
+    }
+    onAnswer?.(a);
   };
 
   return (
@@ -147,6 +147,27 @@ export function MotorTest({
           {running ? tVehicle("test.running") : tVehicle("test.run")}
         </Button>
       </div>
+      {asking && (
+        <div className="vh-test__ask" role="group" aria-label={tVehicle("test.ask")}>
+          <strong>{tVehicle("test.ask")}</strong>
+          <span className="vh-dim vh-small">
+            {slot.spin
+              ? tVehicle("test.askSpin", { dir: tVehicle(`spin.${slot.spin}`) })
+              : tVehicle("test.askBody")}
+          </span>
+          <div className="vh-test__row">
+            <Button size="sm" variant="secondary" icon={CircleCheck} onClick={() => answer("ok")}>
+              {tVehicle("test.answerOk")}
+            </Button>
+            <Button size="sm" variant="secondary" icon={ArrowLeftRight} onClick={() => answer("reversed")}>
+              {tVehicle("test.answerReversed")}
+            </Button>
+            <Button size="sm" variant="secondary" icon={Shuffle} onClick={() => answer("otherWheel")}>
+              {tVehicle("test.answerOther")}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

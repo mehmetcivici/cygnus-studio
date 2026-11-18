@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
-import { CircleCheck, CircleX, Lightbulb, TriangleAlert, Wand2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, CircleCheck, CircleX, Lightbulb, TriangleAlert, Wand2 } from 'lucide-react';
+
+/** A crowded bus (50 fresh boards) must not push the grid off screen. */
+const FOLD_AFTER = 8;
 import type { ResolveOutcome, ResolveStep } from '@cygnus/protocol';
 import { useI18n } from '../../i18n';
 import { Badge, Button, Checkbox, IconButton, Modal, NumberField, toast } from '../../ui';
@@ -7,10 +10,9 @@ import { ModelIcon, describeError, modelText, useBus, useUnresolved, type Device
 import { tBus } from './messages';
 import { identify } from './parts';
 
-function UnresolvedItem({ device }: { device: DeviceView }) {
+function UnresolvedItem({ device, suggested }: { device: DeviceView; suggested: number | null }) {
   const { tl } = useI18n();
   const bus = useBus();
-  const suggested = bus?.suggestNumber(device.devType) ?? null;
   const [num, setNum] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const value = num ?? suggested;
@@ -164,7 +166,19 @@ function ResolveDialog({ open, onClose }: { open: boolean; onClose: () => void }
 /** Strip above the board grid while any board is unassigned or in conflict. */
 export function UnresolvedStrip() {
   const unresolved = useUnresolved();
+  const bus = useBus();
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  // Suggestions come from one plan, so two boards of the same type never get the same number.
+  const key = unresolved.map((d) => `${d.uid48}:${d.num}`).join(',');
+  const suggestions = useMemo(() => {
+    const m = new Map<string, number | null>();
+    if (!bus || !key) return m;
+    for (const s of bus.planResolve()) m.set(s.uid48, s.to);
+    return m;
+  }, [bus, key]);
+  const shown = expanded ? unresolved : unresolved.slice(0, FOLD_AFTER);
+  const hidden = unresolved.length - shown.length;
   return (
     <>
       {unresolved.length > 0 && (
@@ -182,10 +196,27 @@ export function UnresolvedStrip() {
             </Button>
           </header>
           <ul className="bus-unres__list">
-            {unresolved.map((d) => (
-              <UnresolvedItem key={d.uid48} device={d} />
+            {shown.map((d) => (
+              <UnresolvedItem key={d.uid48} device={d} suggested={suggestions.get(d.uid48) ?? bus?.suggestNumber(d.devType) ?? null} />
             ))}
           </ul>
+          {hidden > 0 && (
+            <div className="bus-unres__more">
+              <Button size="sm" variant="ghost" icon={ChevronDown} onClick={() => setExpanded(true)}>
+                {tBus('unresolved.more', { n: hidden })}
+              </Button>
+              <Button size="sm" variant="secondary" icon={Wand2} onClick={() => setOpen(true)}>
+                {tBus('unresolved.autoResolve')}
+              </Button>
+            </div>
+          )}
+          {expanded && unresolved.length > FOLD_AFTER && (
+            <div className="bus-unres__more">
+              <Button size="sm" variant="ghost" icon={ChevronUp} onClick={() => setExpanded(false)}>
+                {tBus('unresolved.less')}
+              </Button>
+            </div>
+          )}
         </section>
       )}
       {/* Outside the strip: it keeps showing the results after the last board is resolved. */}

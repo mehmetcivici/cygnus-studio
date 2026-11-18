@@ -111,7 +111,10 @@
   stroke-dasharray: 5 3;
 }
 .bus-diagram__node.is-lost {
-  opacity: 0.38;
+  opacity: 0.7;
+}
+.bus-diagram__node.is-lost .bus-diagram__box {
+  stroke: var(--cy-danger);
 }
 .bus-diagram__node.is-lost .bus-diagram__box {
   stroke-dasharray: 4 3;
@@ -147,8 +150,11 @@
 }
 .bus-diagram__model {
   fill: var(--cy-text-3);
-  font-family: var(--cy-font-mono);
-  font-size: 8.5px;
+  font-size: 10px;
+}
+.bus-diagram__model.is-lost {
+  fill: var(--cy-danger);
+  font-weight: 700;
 }
 .bus-diagram__warn circle {
   fill: var(--cy-warn);
@@ -279,8 +285,36 @@
   border-color: var(--cy-line-strong);
 }
 .bus-card.is-lost {
-  opacity: 0.5;
   border-style: dashed;
+  border-color: color-mix(in srgb, var(--cy-danger) 60%, var(--cy-line));
+}
+/* Only the body fades: the "lost" label and the actions stay readable. */
+.bus-card.is-lost .bus-card__head,
+.bus-card.is-lost .bus-live {
+  opacity: 0.5;
+}
+.bus-lost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bus-rename-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.bus-rename-wrap .bus-rename {
+  flex: 1;
+  min-width: 0;
+}
+.bus-rename__count {
+  flex: none;
+  font-size: var(--cy-fs-xs);
+  color: var(--cy-text-3);
+}
+.bus-rename__count.is-full {
+  color: var(--cy-warn);
 }
 .bus-card.is-unresolved {
   border-color: color-mix(in srgb, var(--cy-warn) 55%, var(--cy-line));
@@ -372,8 +406,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: var(--cy-h-sm);
+  height: var(--cy-h-sm);
   border: 0;
   border-radius: var(--cy-r-sm);
   background: none;
@@ -695,4 +729,57 @@
 }
 .bus-card__model .cy-mono {
   font-size: var(--cy-fs-2xs);
+}
+
+.bus-count.is-short {
+  color: var(--cy-warn);
+}
+
+.bus-unres__more {
+  display: flex;
+  gap: var(--cy-sp-2);
+  align-items: center;
+  padding-top: var(--cy-sp-2);
+}
+
+.bus-simintro {
+  display: flex;
+  align-items: center;
+  gap: var(--cy-sp-3);
+  padding: var(--cy-sp-2) var(--cy-sp-3);
+  border: 1px solid var(--cy-accent-line);
+  background: var(--cy-accent-soft);
+  border-radius: var(--cy-r-md);
+  flex-wrap: wrap;
+}
+.bus-simintro__icon {
+  color: var(--cy-accent);
+  flex: none;
+}
+.bus-simintro__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  flex: 1;
+}
+.bus-simintro__text span {
+  color: var(--cy-text-2);
+  font-size: var(--cy-fs-sm);
+}
+.bus-simintro__steps {
+  display: flex;
+  align-items: center;
+  gap: var(--cy-sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+.bus-simintro__hw {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cy-text-2);
+  font-size: var(--cy-fs-sm);
 }

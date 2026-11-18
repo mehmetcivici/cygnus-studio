@@ -1,7 +1,8 @@
 import { CATALOG, PROTO_MAJOR, PROTO_MINOR, getModel, type ModelDef, type ParamDef } from '@cygnus/protocol';
 import { getTemplate } from '@cygnus/vehicles';
+import { repairVehicleConfig } from '../vehicle/model';
 import { fmtValue, t, tl, type Lang } from '../../i18n';
-import type { ProjectDevice, ProjectFile } from '../../core';
+import { LEGACY_MODEL_NAME, type ProjectDevice, type ProjectFile } from '../../core';
 import { sameNumber } from './diff';
 
 export interface ReportParam {
@@ -78,7 +79,7 @@ function cardOf(d: ProjectDevice, lang: Lang): ReportCard {
     uid48: d.uid48,
     num: d.num,
     name: d.name,
-    modelName: def ? tl(def.name, lang) : legacy ? 'Cyncoder 1.4 (legacy)' : `Model ${d.model}`,
+    modelName: projectModelName(d, lang),
     modelKey: def?.key ?? d.modelKey,
     devType: d.devType,
     fw: d.fw,
@@ -90,8 +91,8 @@ function cardOf(d: ProjectDevice, lang: Lang): ReportCard {
 }
 
 function vehicleOf(project: ProjectFile, cards: readonly ReportCard[], lang: Lang): ReportVehicle | null {
-  const v = project.vehicle;
-  if (!v) return null;
+  if (!project.vehicle) return null;
+  const v = repairVehicleConfig(project.vehicle).config;
   const tpl = getTemplate(v.templateId);
   const label = (uid: string): string => {
     const c = cards.find((x) => x.uid48 === uid);
@@ -140,4 +141,11 @@ export interface CatalogRow {
 /** Catalog revisions table shown in Settings. */
 export function catalogRows(lang: Lang): CatalogRow[] {
   return CATALOG.map((d) => ({ model: d.model, key: d.key, name: tl(d.name, lang), devType: d.devType, rev: d.catalogRev, params: d.params.length, signals: d.signals.length }));
+}
+
+/** Model name of a snapshot card: catalog name, the shared legacy name, or "Model N" — never a raw key. */
+export function projectModelName(d: Pick<ProjectDevice, 'model' | 'modelKey' | 'driver'>, lang: Lang): string {
+  if (d.driver !== 'cycan') return LEGACY_MODEL_NAME[lang];
+  const def = getModel(d.model);
+  return def ? tl(def.name, lang) : `Model ${d.model}`;
 }

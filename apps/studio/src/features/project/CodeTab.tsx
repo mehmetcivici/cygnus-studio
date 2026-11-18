@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Check, Clipboard, Download, TriangleAlert } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { Badge, Button, Checkbox, EmptyState, Panel, SegmentedControl, Tabs, toast } from '../../ui';
-import { downloadFile, useProject } from '../../core';
+import { LEGACY_MODEL_NAME, downloadFile, useProject } from '../../core';
 import { CODE_FILES, generate, nameCards, type CodeCard, type CodeKind, type CodeText } from './codegen';
 import { codeCardOfLive, codeCardOfProject, useLiveCards } from './live';
 import { tProject } from './messages';
@@ -78,7 +78,7 @@ export function CodeTab() {
                     <span className="pj-pick">
                       <span className="cy-mono pj-pick__id">{names[i]?.ident}</span>
                       <span className="pj-muted">
-                        {c.def?.name[lang] ?? c.modelKey} · #{c.num}
+                        {c.def?.name[lang] ?? (c.modelKey === 'cyncoder_v3' ? LEGACY_MODEL_NAME[lang] : c.modelKey)} · #{c.num}
                       </span>
                     </span>
                   }

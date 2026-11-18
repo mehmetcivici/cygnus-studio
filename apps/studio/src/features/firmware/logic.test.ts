@@ -3,6 +3,7 @@ import { makeDemoFirmware } from '@cygnus/simulator';
 import { describe, expect, it } from 'vitest';
 import {
   assessCard,
+  rowStatus,
   buildDate,
   cmpVersion,
   compatibleImages,
@@ -129,5 +130,15 @@ describe('downgrade and throughput', () => {
   it('computes speed and remaining time', () => {
     expect(transferRate(2000, 8000, 1000)).toEqual({ rateKBs: 2, etaS: 3 });
     expect(transferRate(0, 8000, 1000)).toEqual({ rateKBs: 0, etaS: null });
+  });
+});
+
+describe('rowStatus (row badge vs progress panel)', () => {
+  it('never shows "up to date" while the board is still queued or updating', () => {
+    expect(rowStatus('upToDate', 'running')).toBe('updating');
+    expect(rowStatus('updateAvailable', 'queued')).toBe('queued');
+    expect(rowStatus('upToDate', 'done')).toBe('upToDate');
+    expect(rowStatus('updateAvailable', 'failed')).toBe('updateAvailable');
+    expect(rowStatus('bootloader', undefined)).toBe('bootloader');
   });
 });

@@ -2,9 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CATALOG, Cls, decodeStatusFrame, encodeId, encodeIdentify, encodeStatusFrame, messageId, type ModelDef } from '@cygnus/protocol';
+import { BROADCAST_ALL, CATALOG, Cls, ESTOP_REPEAT_COUNT, decodeStatusFrame, encodeEstop, encodeId, encodeIdentify, encodeStatusFrame, messageId, type ModelDef } from '@cygnus/protocol';
 import { describe, expect, it } from 'vitest';
-import { ARDUINO_DECODE_BEGIN, ARDUINO_DECODE_END, canId, frameIds, genArduino, genCHeader, genPython, identOf, nameCards, type CodeCard, type CodeText } from './codegen';
+import { ARDUINO_DECODE_BEGIN, ARDUINO_DECODE_END, ESTOP_DATA, ESTOP_ID, canId, frameIds, genArduino, genCHeader, genPython, identOf, nameCards, type CodeCard, type CodeText } from './codegen';
 
 const TEXT: CodeText = { notice: ['NOTICE: no Cygnus host library exists yet; constants and raw frames only.'], source: 'test' };
 
@@ -90,7 +90,7 @@ describe('Arduino and Python skeletons', () => {
 
   it('only use the standard and the named third-party libraries', () => {
     expect([...arduino.matchAll(/^#include [<"](.+?)[>"]/gm)].map((m) => m[1])).toEqual(['SPI.h', 'mcp2515.h', 'string.h', 'cygnus_ids.h']);
-    expect([...python.matchAll(/^\s*(?:import|from) (\w+)/gm)].map((m) => m[1])).toEqual(['struct', 'can']);
+    expect(new Set([...python.matchAll(/^\s*(?:import|from) (\w+)/gm)].map((m) => m[1]))).toEqual(new Set(['struct', 'time', 'can']));
     expect(arduino).toContain('no Cygnus host library');
     expect(python).toContain('no Cygnus host library');
     expect(arduino).toContain('autowp/arduino-mcp2515');
@@ -164,5 +164,28 @@ print(json.dumps({"out": out, "ids": ids}))
       for (const [k, v] of Object.entries(c.expected)) expect(near(Number(got[sigName(k)]), v), `${c.model}/${c.index}/${k}`).toBe(true);
     });
     expect(readFileSync(join(dir, 'decode.cpp'), 'utf8')).toContain('cyDecode');
+  });
+});
+
+describe('safety rules in the generated code (PROTOCOL 4.7, 7)', () => {
+  it('ESTOP constants match the protocol codec', () => {
+    const f = encodeEstop(BROADCAST_ALL);
+    expect(ESTOP_ID).toBe(f.id);
+    expect([...ESTOP_DATA]).toEqual([...f.data]);
+    const h = genCHeader(ALL, TEXT);
+    expect(h).toContain(`#define CYGNUS_ESTOP_REPEAT ${ESTOP_REPEAT_COUNT}u`);
+  });
+
+  it('Arduino and Python send ESTOP three times and start driving from neutral', () => {
+    const ino = genArduino(ALL, TEXT);
+    expect(ino).toMatch(/for \(uint8_t i = 0; i < CYGNUS_ESTOP_REPEAT; i\+\+\)/);
+    expect(ino).toContain('cyNeutral(');
+    // the example never sends a non-neutral command
+    expect(ino).not.toMatch(/^\s*cySet\(/m);
+    const py = genPython(ALL, TEXT);
+    expect(py).toContain('for i in range(ESTOP_REPEAT):');
+    expect(py).toContain('ESTOP_REPEAT = 3');
+    expect(py).toMatch(/^\s{8}neutral\(bus, DEVICES\[/m);
+    expect(py).not.toMatch(/^\s{8}ctrl_set\(/m);
   });
 });

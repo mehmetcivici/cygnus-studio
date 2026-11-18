@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import { Badge, Button, EmptyState, Panel, ProgressBar, toast } from '../../ui';
 import { captureBus, describeError, useBus, useConnection, useProject, type CaptureProgress } from '../../core';
 import { matchCards } from './match';
+import { projectModelName } from './report';
 import { useLiveCards } from './live';
 import { tProject } from './messages';
 
@@ -125,7 +126,7 @@ export function SnapshotTab() {
                 return (
                   <tr key={d.uid48}>
                     <td>
-                      <strong>{d.name.trim() || d.modelKey}</strong> <span className="pj-muted">{d.modelKey}</span>
+                      <strong>{d.name.trim() || projectModelName(d, lang)}</strong> <span className="pj-muted">{projectModelName(d, lang)}</span>
                     </td>
                     <td className="is-num cy-mono">{d.num}</td>
                     <td className="cy-mono pj-muted">{d.uid48}</td>

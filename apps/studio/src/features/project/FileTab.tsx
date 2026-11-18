@@ -6,6 +6,7 @@ import { newProject, openProjectFromDisk, saveProjectToDisk, setProjectName, set
 import { clearSaved, markSaved, useSaveInfo } from './saveInfo';
 import { sectionOwner, sectionShape } from './live';
 import { tProject } from './messages';
+import { repairVehicleConfig } from '../vehicle/model';
 
 const KNOWN_OWNERS = ['tuner', 'scope', 'vehicle', 'canmon', 'device', 'bus'];
 
@@ -47,7 +48,7 @@ export function FileTab() {
   const sections = Object.entries(project.sections);
   const rows: Array<{ id: string; label: string; summary: string; empty: boolean }> = [
     { id: 'bus', label: tProject('sum.bus'), summary: devices ? tProject('sum.busValue', { count: devices, at: when(project.bus.capturedAt) }) : tProject('sum.none'), empty: devices === 0 },
-    { id: 'vehicle', label: tProject('sum.vehicle'), summary: project.vehicle ? `${project.vehicle.name || project.vehicle.templateId} · ${tProject('sum.slots', { count: Object.keys(project.vehicle.bindings).length })}` : tProject('sum.none'), empty: !project.vehicle },
+    { id: 'vehicle', label: tProject('sum.vehicle'), summary: project.vehicle ? `${project.vehicle.name || project.vehicle.templateId} · ${tProject('sum.slots', { count: Object.keys(repairVehicleConfig(project.vehicle).config.bindings).length })}` : tProject('sum.none'), empty: !project.vehicle },
     { id: 'notes', label: tProject('sum.notes'), summary: project.notes.trim() ? tProject('sum.chars', { count: project.notes.length }) : tProject('sum.none'), empty: !project.notes.trim() },
     ...sections.map(([id, v]) => {
       const owner = sectionOwner(id);

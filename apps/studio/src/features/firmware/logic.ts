@@ -69,6 +69,8 @@ export function compatibleImages(images: readonly FwImage[], t: Target): FwImage
 }
 
 export type CardStatus = 'legacy' | 'offline' | 'bootloader' | 'noImage' | 'hwIncompatible' | 'updateAvailable' | 'upToDate' | 'ahead';
+/** What a card row shows: while an update of the board is queued or running, the run wins. */
+export type RowStatus = CardStatus | 'queued' | 'updating';
 
 export interface CardInfo extends Target {
   online: boolean;
@@ -100,6 +102,16 @@ export function assessCard(card: CardInfo, images: readonly FwImage[]): CardAsse
   if (!card.fw) return { status: 'updateAvailable', best };
   const c = cmpVersion(card.fw, imageVersion(best.header));
   return { status: c < 0 ? 'updateAvailable' : c === 0 ? 'upToDate' : 'ahead', best };
+}
+
+/**
+ * The board may already report the new version while its update is still verifying; the row
+ * must not say "up to date" before the progress panel says "done".
+ */
+export function rowStatus(status: CardStatus, runState: string | undefined): RowStatus {
+  if (runState === 'queued') return 'queued';
+  if (runState === 'running') return 'updating';
+  return status;
 }
 
 /** Flashing an older image than what runs needs an explicit extra confirmation. */

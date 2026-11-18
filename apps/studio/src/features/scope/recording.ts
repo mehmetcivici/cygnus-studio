@@ -28,13 +28,16 @@ function parseJson(text: string): ParsedRecording | null {
   const channels: RecordedChannel[] = [];
   for (const c of doc.channels) {
     if (!isRecord(c) || !Array.isArray(c.t_ms) || !Array.isArray(c.v)) return null;
-    const label = typeof c.label === 'string' ? c.label : `${String(c.uid48 ?? '')}.${String(c.key ?? '')}`;
-    const unit = typeof c.unit === 'string' ? c.unit : '';
+    const label = (typeof c.label === 'string' ? c.label : `${String(c.uid48 ?? '')}.${String(c.key ?? '')}`).slice(0, 120);
+    const unit = typeof c.unit === 'string' ? c.unit.slice(0, 16) : '';
     const n = Math.min(c.t_ms.length, c.v.length);
     const t: number[] = [];
     const v: number[] = [];
     for (let i = 0; i < n; i++) {
-      t.push(Number(c.t_ms[i]) / 1000);
+      // A hand-edited or damaged file must not put NaN or a backwards step on the time axis.
+      const ts = Number(c.t_ms[i]) / 1000;
+      if (!Number.isFinite(ts) || (t.length > 0 && ts < (t[t.length - 1] ?? ts))) continue;
+      t.push(ts);
       const x = c.v[i];
       v.push(typeof x === 'number' ? x : NaN);
     }
@@ -69,6 +72,8 @@ export function splitCsvLine(line: string): string[] {
 
 /** `Sol ön · velocity [rps]` → label and unit. */
 export function splitTitle(title: string): { label: string; unit: string } {
+  // The recorder defuses spreadsheet formulas with a leading quote; undo that for display.
+  if (/^'[=+\-@\t\r]/.test(title)) title = title.slice(1);
   const m = /^(.*) \[([^\]]*)\]$/.exec(title);
   return m ? { label: m[1] ?? title, unit: m[2] ?? '' } : { label: title, unit: '' };
 }
@@ -78,10 +83,12 @@ function parseCsv(text: string): ParsedRecording | null {
   const header = lines[0] ? splitCsvLine(lines[0]) : [];
   if (header[0] !== 'time_s' || header.length < 2) return null;
   const channels: RecordedChannel[] = header.slice(1).map((h) => ({ ...splitTitle(h), t: [], v: [] }));
+  let lastT = -Infinity;
   for (let i = 1; i < lines.length; i++) {
     const cells = splitCsvLine(lines[i] ?? '');
     const t = Number(cells[0]);
-    if (!Number.isFinite(t)) continue;
+    if (!Number.isFinite(t) || (i > 1 && t < lastT)) continue;
+    lastT = t;
     channels.forEach((c, k) => {
       const cell = cells[k + 1];
       // An empty cell means "no value yet": skip it instead of drawing a hole.

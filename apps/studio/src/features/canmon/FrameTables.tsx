@@ -11,6 +11,7 @@ import { FLAG_ERROR, FLAG_UNANSWERED, cardOf, type CardRef } from './filter';
 import { fmtFreq, fmtFrameTime, fmtPeriod, frameTypeLabel, type TimeMode } from './format';
 import { tCanMonitor } from './messages';
 import { Bytes, Decoded, fmtId } from './parts';
+import { RowDecodeCache } from './rowCache';
 
 interface Common {
   snap: TraceSnapshot;
@@ -55,43 +56,18 @@ export interface StreamTableProps extends Common {
   onSelect: (seq: number | null) => void;
 }
 
-interface RowInfo {
-  f: TracedFrame;
-  desc: FrameDescription | null;
-}
-
 /** Time-ordered frames; only the visible rows are decoded. */
 export function StreamTable({ snap, bus, hexIds, names, onId, onCard, empty, timeMode, selected, onSelect }: StreamTableProps) {
   const { lang } = useI18n();
   const dec = (v: number, d: number): string => fmtNumber(v, d, { lang, grouping: false });
-  // Cache lives for one snapshot: rows are re-rendered by scrolling far more often than data changes.
-  const cache = useMemo(() => {
-    const infos = new Map<number, RowInfo | null>();
-    const times = new Map<number, number | null>();
-    const base = frameTrace.totalSeen - frameTrace.length;
-    return {
-      info(seq: number): RowInfo | null {
-        let v = infos.get(seq);
-        if (v === undefined) {
-          const f = frameTrace.get(seq - base);
-          v = f ? { f, desc: bus ? bus.describeFrame({ id: f.id, data: f.data, fd: f.fd, brs: f.brs, timestamp: f.t }, lang) : null } : null;
-          infos.set(seq, v);
-        }
-        return v;
-      },
-      time(seq: number): number | null {
-        const known = infos.get(seq);
-        if (known) return known.f.t;
-        let t = times.get(seq);
-        if (t === undefined) {
-          t = frameTrace.get(seq - base)?.t ?? null;
-          times.set(seq, t);
-        }
-        return t;
-      },
-    };
-    // `snap.rev` renews the cache whenever the trace moved.
-  }, [snap.rev, bus, lang]);
+  const store = useMemo(
+    () => new RowDecodeCache<TracedFrame, FrameDescription | null>((f) => (bus ? bus.describeFrame({ id: f.id, data: f.data, fd: f.fd, brs: f.brs, timestamp: f.t }, lang) : null)),
+    [bus, lang],
+  );
+  // `snap.rev` rebinds the lookup whenever the trace moved; decoded rows survive in `store`.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const view = useMemo(() => store.view(frameTrace), [snap.rev, store]);
+  const cache = useMemo(() => ({ info: view.info, time: (seq: number): number | null => view.frame(seq)?.t ?? null }), [view]);
 
   const columns = useMemo<Column<number>[]>(
     () => [
@@ -131,8 +107,7 @@ export function StreamTable({ snap, bus, hexIds, names, onId, onCard, empty, tim
         render: (seq) => {
           const r = cache.info(seq);
           if (!r) return null;
-          const card = cardOf(r.f.id);
-          return <Decoded id={r.f.id} desc={r.desc} boardName={nameOf(names, r.f.id)} onCard={() => card && onCard(card)} />;
+          return <Decoded id={r.f.id} desc={r.desc} boardName={nameOf(names, r.f.id)} onCard={onCard} />;
         },
       },
     ],
@@ -179,8 +154,7 @@ export function IdTable({ snap, bus, hexIds, names, onId, onCard, empty, selecte
         header: tCanMonitor('col.decoded'),
         width: 460,
         render: (e) => {
-          const card = cardOf(e.id);
-          return <Decoded id={e.id} desc={descs.get(e.id) ?? null} boardName={nameOf(names, e.id)} onCard={() => card && onCard(card)} />;
+          return <Decoded id={e.id} desc={descs.get(e.id) ?? null} boardName={nameOf(names, e.id)} onCard={onCard} />;
         },
       },
       {

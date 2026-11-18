@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Play, Send, Square, TriangleAlert } from 'lucide-react';
 import { Cls, decodeId, type CanIdFields, type CygnusBus } from '@cygnus/protocol';
-import { displayName, useDevices, useDrive } from '../../core';
+import { ArmButton, displayName, useDevices, useDrive, useDriveSession } from '../../core';
 import { useI18n } from '../../i18n';
 import { Badge, Button, ConfirmDialog, NumberField, Select, TextField, Toggle, Tooltip, cx, toast } from '../../ui';
 import {
@@ -12,10 +12,12 @@ import {
   KNOWN_CLASSES,
   bytesHex,
   composeId,
+  ctrlGate,
   idHex,
   invalidFields,
   parseHexId,
   parseSend,
+  periodicLimitMs,
   sendRisks,
   type FieldKey,
   type SendError,
@@ -39,7 +41,7 @@ export interface SendPanelProps {
 }
 
 /** Raw frame sender (advanced mode): id builder, one-shot and periodic send, history. */
-export function SendPanel({ bus, connected }: SendPanelProps) {
+export const SendPanel = memo(function SendPanel({ bus, connected }: SendPanelProps) {
   const { t, lang } = useI18n();
   const devices = useDevices();
   const estop = useDrive((s) => s.estopLatched);
@@ -54,15 +56,34 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
   const [history, setHistory] = useState<Sent[]>([]);
   const [confirm, setConfirm] = useState<null | { run: () => void }>(null);
   const timer = useRef<number | null>(null);
+  const limit = useRef<number | null>(null);
   const fdCapable = bus?.transport.info.fd ?? false;
+
+  const parsed = parseSend(idText, dataText, fd, brs);
+  const id = parseHexId(idText);
+  const risks = id === null ? [] : sendRisks(id);
+  const bad = invalidFields(fields);
+  const gate = ctrlGate(id, devices);
+  const isCtrl = gate.kind !== 'none';
+  // CTRL frames go through the shared drive session of the board they address, like every screen that moves something.
+  const { session, armed, busyOwner } = useDriveSession('canmon', gate.kind === 'target' ? gate.uid48 : null);
+  const blocked = (risks.length > 0 && estop) || gate.kind === 'blocked' || (isCtrl && !armed);
+  const canSend = connected && parsed.ok && !blocked;
 
   const stop = useCallback((): void => {
     if (timer.current !== null) clearInterval(timer.current);
+    if (limit.current !== null) clearTimeout(limit.current);
     timer.current = null;
+    limit.current = null;
     setRunning(false);
   }, []);
   useEffect(() => stop, [stop]);
-  useEffect(() => stop(), [bus, estop, connected, stop]);
+  useEffect(() => stop(), [bus, estop, connected, idText, dataText, stop]);
+  // Every cut-off of the session (release, focus loss, board fault or loss, E-STOP) ends periodic CTRL at once.
+  useEffect(() => session?.onDisarm(() => stop()), [session, stop]);
+  useEffect(() => {
+    if (isCtrl && !armed) stop();
+  }, [isCtrl, armed, stop]);
   // Periodic frames stop when the window loses focus, like every actuating screen.
   useEffect(() => {
     const off = (): void => stop();
@@ -73,13 +94,6 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
       document.removeEventListener('visibilitychange', off);
     };
   }, [stop]);
-
-  const parsed = parseSend(idText, dataText, fd, brs);
-  const id = parseHexId(idText);
-  const risks = id === null ? [] : sendRisks(id);
-  const bad = invalidFields(fields);
-  const blocked = risks.length > 0 && estop;
-  const canSend = connected && parsed.ok && !blocked;
 
   const setId = (text: string): void => {
     setIdText(text);
@@ -105,6 +119,7 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
 
   const sendOnce = (): void => {
     if (!bus || !parsed.ok) return;
+    if (isCtrl && !session?.armed) return;
     bus.send(parsed.frame);
     setCount((n) => n + 1);
     setHistory((h) => [{ ...parsed.frame }, ...h.filter((x) => !(x.id === parsed.frame.id && bytesHex(x.data) === bytesHex(parsed.frame.data)))].slice(0, MAX_HISTORY));
@@ -115,7 +130,17 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
     const frame = parsed.frame;
     stop();
     sendOnce();
-    timer.current = window.setInterval(() => bus.send(frame), Math.max(10, periodMs));
+    if (isCtrl && !session?.armed) return;
+    timer.current = window.setInterval(() => {
+      if (isCtrl && !session?.armed) return stop();
+      bus.send(frame);
+    }, Math.max(10, periodMs));
+    const maxMs = periodicLimitMs(isCtrl);
+    limit.current = window.setTimeout(() => {
+      stop();
+      if (isCtrl) session?.disarm('released');
+      toast.info(tCanMonitor('send.limitReached', { s: maxMs / 1000 }));
+    }, maxMs);
     setRunning(true);
   };
 
@@ -219,7 +244,11 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
                 <strong>{tCanMonitor('send.warn')}</strong>
                 <span>{riskText}</span>
                 {estop && <span>{tCanMonitor('send.estop')}</span>}
+                {gate.kind === 'blocked' && <span>{tCanMonitor(`send.ctrlBlocked.${gate.reason}`)}</span>}
+                {gate.kind === 'target' && <span>{tCanMonitor('send.ctrlArm')}</span>}
+                {busyOwner && <span>{tCanMonitor('send.busy', { owner: busyOwner })}</span>}
               </div>
+              {gate.kind === 'target' && <ArmButton session={session} />}
             </div>
           )}
 
@@ -240,6 +269,7 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
               )}
             </span>
             {!connected && <span className="canmon-send__hint">{tCanMonitor('send.noLink')}</span>}
+            {connected && <span className="canmon-send__hint">{tCanMonitor(isCtrl ? 'send.limitCtrl' : 'send.limit', { s: periodicLimitMs(isCtrl) / 1000 })}</span>}
           </div>
         </div>
 
@@ -287,4 +317,4 @@ export function SendPanel({ bus, connected }: SendPanelProps) {
       />
     </section>
   );
-}
+});

@@ -1,4 +1,6 @@
+import { memo } from 'react';
 import { Cls, decodeId, type FrameDescription } from '@cygnus/protocol';
+import { cardOf, type CardRef } from './filter';
 import { Badge, type Tone } from '../../ui';
 import { classLabel, frameKind, idHex } from './ids';
 import { tCanMonitor } from './messages';
@@ -41,11 +43,11 @@ export interface DecodedProps {
   desc: FrameDescription | null;
   /** User-given board name for the sender/target, when known. */
   boardName: string;
-  onCard: () => void;
+  onCard: (card: CardRef) => void;
 }
 
-/** Class, index, card and the first decoded fields on one line. */
-export function Decoded({ id, desc, boardName, onCard }: DecodedProps) {
+/** Class, index, card and the first decoded fields on one line. Memoised: a row's frame never changes. */
+export const Decoded = memo(function Decoded({ id, desc, boardName, onCard }: DecodedProps) {
   const kind = frameKind(id);
   if (!desc) return <ClassBadge id={id} />;
   if (kind !== 'cycan') {
@@ -70,7 +72,8 @@ export function Decoded({ id, desc, boardName, onCard }: DecodedProps) {
         title={tCanMonitor('filterCard')}
         onClick={(e) => {
           e.stopPropagation();
-          onCard();
+          const card = cardOf(id);
+          if (card) onCard(card);
         }}
       >
         {desc.address}
@@ -79,10 +82,10 @@ export function Decoded({ id, desc, boardName, onCard }: DecodedProps) {
       {fields && <span className="canmon-dec__dim">{fields}</span>}
     </span>
   );
-}
+});
 
 /** Payload bytes in hex; bytes that changed recently are highlighted. */
-export function Bytes({ data, changed }: { data: Uint8Array; changed?: (i: number) => boolean }) {
+export const Bytes = memo(function Bytes({ data, changed }: { data: Uint8Array; changed?: (i: number) => boolean }) {
   return (
     <span className="canmon-bytes cy-mono">
       {Array.from(data, (b, i) => (
@@ -92,4 +95,4 @@ export function Bytes({ data, changed }: { data: Uint8Array; changed?: (i: numbe
       ))}
     </span>
   );
-}
+});

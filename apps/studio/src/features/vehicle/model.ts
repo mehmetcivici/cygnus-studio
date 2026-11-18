@@ -392,7 +392,7 @@ export interface PlanGroup {
 }
 
 /** Groups plan steps per board: number, then name, then parameters. */
-export function groupPlan(plan: PlanResult): PlanGroup[] {
+export function groupPlan(plan: PlanResult, slotOrder?: readonly string[]): PlanGroup[] {
   const groups = new Map<string, PlanGroup>();
   for (const s of plan.steps) {
     const k = normUid(s.uid48);
@@ -403,7 +403,15 @@ export function groupPlan(plan: PlanResult): PlanGroup[] {
     else if (s.kind === 'rename') g.name.push(s);
     else g.params.push(s);
   }
-  return [...groups.values()];
+  const out = [...groups.values()];
+  if (!slotOrder) return out;
+  // Listed in template order (front left drive, front left steer, …), not in plan order.
+  const rank = (id: string): number => {
+    const i = slotOrder.indexOf(id);
+    return i < 0 ? slotOrder.length : i;
+  };
+  for (const g of out) g.slotIds.sort((a, b) => rank(a) - rank(b));
+  return out.sort((a, b) => rank(a.slotIds[0] ?? '') - rank(b.slotIds[0] ?? ''));
 }
 
 /** Slots whose suggested number collides with another slot of the same DEVTYPE. */
@@ -438,4 +446,60 @@ export function slotCounts(tpl: VehicleTemplate): { actuators: number; sensors: 
     if (s.required) required++;
   }
   return { actuators, sensors, infra, required };
+}
+
+// ---------- repair of loaded configs ----------
+
+const UID48_RE = /^[0-9a-f]{12}$/;
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** One stored binding in its valid shape, or null when it cannot be trusted (hand-edited or corrupt file). */
+export function sanitizeBinding(v: unknown): SlotBinding | null {
+  if (!isRecord(v)) return null;
+  if (v.kind === 'external') {
+    const note = typeof v.note === 'string' ? v.note.slice(0, 200) : '';
+    const canId = typeof v.canId === 'number' && Number.isInteger(v.canId) && v.canId >= 0 && v.canId <= 0x1fffffff ? v.canId : undefined;
+    return canId === undefined ? { kind: 'external', note } : { kind: 'external', canId, note };
+  }
+  if (v.kind !== 'device' && v.kind !== 'channel') return null;
+  if (typeof v.uid48 !== 'string' || typeof v.model !== 'string') return null;
+  const uid48 = v.uid48.toLowerCase();
+  // An unknown model is kept: slot status shows it as incompatible instead of losing the user's choice.
+  if (!UID48_RE.test(uid48) || v.model.length === 0 || v.model.length > 32) return null;
+  if (v.kind === 'device') return { kind: 'device', uid48, model: v.model };
+  const ch = v.channel;
+  if (typeof ch !== 'number' || !Number.isInteger(ch) || ch < 1 || ch > SERVO_CHANNELS) return null;
+  return { kind: 'channel', uid48, model: v.model, channel: ch };
+}
+
+export interface RepairedConfig {
+  config: VehicleConfig;
+  /** Slot ids whose binding was dropped (bad shape or unknown slot). */
+  dropped: string[];
+}
+
+/**
+ * A vehicle config read from a project file, made safe to render: every binding is checked
+ * against its shape and the template's slot list, and anything unusable is dropped. The
+ * same object comes back when nothing had to change, so memoised consumers stay stable.
+ */
+export function repairVehicleConfig(cfg: VehicleConfig, slotIds?: ReadonlySet<string>): RepairedConfig {
+  const raw: unknown = cfg.bindings;
+  const src = isRecord(raw) ? raw : {};
+  const dropped: string[] = [];
+  const bindings: Record<string, SlotBinding> = {};
+  let changed = !isRecord(raw);
+  for (const [slotId, v] of Object.entries(src)) {
+    const b = slotIds && !slotIds.has(slotId) ? null : sanitizeBinding(v);
+    if (!b) {
+      dropped.push(slotId);
+      changed = true;
+      continue;
+    }
+    if (JSON.stringify(b) !== JSON.stringify(v)) changed = true;
+    bindings[slotId] = b;
+  }
+  const name = typeof cfg.name === 'string' ? cfg.name : '';
+  if (name !== cfg.name) changed = true;
+  return { config: changed ? { templateId: cfg.templateId, name, bindings } : cfg, dropped };
 }

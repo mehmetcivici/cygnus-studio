@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CarFront,
   CircleCheck,
@@ -105,7 +105,7 @@ function liveFor(
     case "cyncoder": {
       const r = v("abs.position");
       return Number.isFinite(r)
-        ? { dialDeg: wrap360(r * 360), value: `${fmt(wrap360(r * 360))}°` }
+        ? { dialDeg: wrap360(r * 360), value: `${fmt(wrap360(Math.round(r * 360)))}°` }
         : undefined;
     }
     case "gyro": {
@@ -450,8 +450,17 @@ function Body({
 /** Default screen once a vehicle is configured: live telemetry on the diagram. */
 export function LiveView() {
   const { tl } = useI18n();
-  const { cfg, setup, tpl, statuses } = useSavedVehicle();
+  const { cfg, setup, tpl, statuses, dropped } = useSavedVehicle();
   const [confirm, setConfirm] = useState(false);
+  // Store the repaired copy once, so the bad bindings do not come back on the next load.
+  const droppedKey = dropped.join(",");
+  useEffect(() => {
+    if (!cfg || droppedKey === "") return;
+    setVehicleConfig(cfg);
+    toast.warn(tVehicle("live.repaired", { n: droppedKey.split(",").length }), {
+      description: tVehicle("live.repairedBody"),
+    });
+  }, [cfg, droppedKey]);
   if (!cfg) return null;
   const online = Object.values(statuses).filter((s) => s === "online").length;
   const total = tpl?.slots.length ?? 0;

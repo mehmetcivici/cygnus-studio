@@ -42,6 +42,7 @@ import {
 import {
   bindingFor,
   candidatesFor,
+  isEncoder,
   seqCurrent,
   seqOrder,
   slotStatuses,
@@ -312,7 +313,16 @@ function SeqBar({ tpl, filled }: { tpl: VehicleTemplate; filled: number }) {
             done: filled,
             total: tpl.slots.length,
           })}
-          {!seq.done && ` · ${tVehicle("assign.seqHint")}`}
+          {!seq.done &&
+            ` · ${tVehicle(
+              !slot
+                ? "assign.seqHint"
+                : slot.role === "gyro"
+                  ? "assign.seqHintGyro"
+                  : isEncoder(slot)
+                    ? "assign.seqHintEncoder"
+                    : "assign.seqHintBoard",
+            )}`}
         </span>
       </div>
       <div className="vh-seq__act">

@@ -1,9 +1,8 @@
 import { create } from 'zustand';
-import { CyError, DeviceState, getModel, isCyError, type CygnusBus, type CyfwError, type CyfwHeader, type DeviceHandle, type FirmwarePhase, type FirmwareProgress } from '@cygnus/protocol';
+import { CyError, getModel, isCyError, type CygnusBus, type CyfwError, type CyfwHeader, type DeviceHandle, type FirmwarePhase, type FirmwareProgress } from '@cygnus/protocol';
 import { makeDemoFirmware } from '@cygnus/simulator';
 import { toast } from '../../ui';
-import { describeError, useConnection } from '../../core';
-import { useNav } from '../../app/nav';
+import { acquireBusyLock, describeError, useConnection } from '../../core';
 import { t } from '../../i18n';
 import {
   cmpVersion,
@@ -204,26 +203,19 @@ function settle(uid48: string, outcome: { ok: true; durationMs: number; rewinds:
   }
 }
 
-/** Leaving the screen or dropping the link mid-update does not stop it, but the user must know. */
-function installGuards(): () => void {
-  const beforeUnload = (e: BeforeUnloadEvent): void => {
-    e.preventDefault();
-    e.returnValue = '';
-  };
-  window.addEventListener('beforeunload', beforeUnload);
-  const offNav = useNav.subscribe((s, prev) => {
-    if (prev.screen === 'firmware' && s.screen !== 'firmware') {
-      toast.warn(t('firmware.guard.leftTitle'), { description: t('firmware.guard.leftBody'), id: 'fw-left', duration: 8000 });
-    }
-  });
+/**
+ * While boards are being flashed, leaving the screen, dropping the link or closing the window
+ * asks first (core busy lock), and a link loss is explained once.
+ */
+function installGuards(count: number): () => void {
+  const release = acquireBusyLock('firmware.busy.flashing', { n: count });
   const offConn = useConnection.subscribe((s, prev) => {
     if (prev.phase === 'connected' && s.phase !== 'connected') {
       toast.error(t('firmware.guard.linkTitle'), { description: t('firmware.guard.linkBody'), id: 'fw-link', duration: 10000 });
     }
   });
   return () => {
-    window.removeEventListener('beforeunload', beforeUnload);
-    offNav();
+    release();
     offConn();
   };
 }
@@ -273,33 +265,15 @@ const MAX_ATTEMPTS = 3;
 type Outcome = { kind: 'ok'; durationMs: number; rewinds: number } | { kind: 'skipped'; reason: SkipReason } | { kind: 'error'; error: unknown };
 
 /**
- * The final ACK of a lossy link can go missing after the board already verified the image and
- * restarted; the host then keeps talking to an application and sees WRONG_STATE. The board's own
- * heartbeat is the truth, so a failure is re-checked against it.
+ * Runs one board, retrying when it stops answering. A lost final ACK is the host's job now (it
+ * repeats END and checks the version in the board's heartbeat), so a failure here is real.
  */
-async function landedOn(device: DeviceHandle, image: FwImage | undefined): Promise<boolean> {
-  if (!image) return false;
-  const want = imageVersion(image.header);
-  for (let i = 0; i < 30; i++) {
-    if (device.online && !device.bootloader && device.state !== DeviceState.BOOT && device.fw && cmpVersion(device.fw, want) === 0) return true;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return false;
-}
-
-async function runWithRetry(uid48: string, ctl: AbortController, landed: () => Promise<boolean>, exec: () => Promise<Outcome>): Promise<void> {
+async function runWithRetry(uid48: string, ctl: AbortController, exec: () => Promise<Outcome>): Promise<void> {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     patchRun(uid48, { state: 'running', attempt, startedAt: now(), phase: null, fraction: 0, sent: 0, rewinds: 0, transferAt: null, rateKBs: 0, etaS: null, error: undefined });
     const o = await exec();
     if (o.kind === 'ok') return settle(uid48, { ok: true, durationMs: o.durationMs, rewinds: o.rewinds });
     if (o.kind === 'skipped') return settle(uid48, { skipped: o.reason });
-    const run0 = useFwUpdate.getState().runs[uid48];
-    // A cancel before the verify step leaves the board in its bootloader; no need to wait for a version that cannot appear.
-    const mayHaveLanded = isCyError(o.error, 'ABORTED') ? run0?.phase === 'verify' : !isCyError(o.error, 'DISCONNECTED');
-    if (mayHaveLanded && (await landed())) {
-      const run = useFwUpdate.getState().runs[uid48];
-      return settle(uid48, { ok: true, durationMs: run?.startedAt ? now() - run.startedAt : 0, rewinds: run?.rewinds ?? 0 });
-    }
     if (isCyError(o.error, 'TIMEOUT') && attempt < MAX_ATTEMPTS && !ctl.signal.aborted) {
       const run = useFwUpdate.getState().runs[uid48];
       if (run) pushLog({ name: run.name, from: run.from, to: run.to, outcome: 'retry', detail: t('firmware.log.retryDetail', { n: attempt + 1, max: MAX_ATTEMPTS }) });
@@ -312,11 +286,11 @@ async function runWithRetry(uid48: string, ctl: AbortController, landed: () => P
 /** One board with a chosen image: also the recovery and retry path. Downgrades are allowed here. */
 export async function updateOne(job: Job): Promise<void> {
   if (useFwUpdate.getState().running) return;
-  const unguard = installGuards();
+  const unguard = installGuards(1);
   const { device } = job;
   const ctl = begin([newRun(device, job.name, job.image, 'running')]);
   try {
-    await runWithRetry(device.uid48, ctl, () => landedOn(device, job.image), async () => {
+    await runWithRetry(device.uid48, ctl, async () => {
       try {
         const r = await device.firmware.update(job.image.bytes, { signal: ctl.signal, onProgress: (p) => onProgress(device.uid48, p) });
         return { kind: 'ok', durationMs: r.durationMs, rewinds: r.rewinds };
@@ -339,7 +313,7 @@ export async function updateMany(bus: CygnusBus, devices: readonly { device: Dev
   const ordered = [...images].sort((a, b) => cmpVersion(imageVersion(b.header), imageVersion(a.header)));
   const bytes = ordered.map((i) => i.bytes);
   const runs = devices.map(({ device, name }) => newRun(device, name, compatibleImages(ordered, { model: device.model, hwRev: device.hwRev })[0], 'queued'));
-  const unguard = installGuards();
+  const unguard = installGuards(devices.length);
   const ctl = begin(runs);
   try {
     for (const { device } of devices) {
@@ -353,11 +327,12 @@ export async function updateMany(bus: CygnusBus, devices: readonly { device: Dev
         settle(uid, { ok: false, error: new CyError('ABORTED', 'aborted') });
         continue;
       }
-      const best = compatibleImages(ordered, { model: device.model, hwRev: device.hwRev })[0];
-      await runWithRetry(uid, ctl, () => landedOn(device, best), async () => {
+      await runWithRetry(uid, ctl, async () => {
         try {
           const [it] = await bus.updateAllFirmware(bytes, { devices: [device], signal: ctl.signal, onProgress: (d, p) => onProgress(d.uid48, p) });
           if (!it) return { kind: 'error', error: new CyError('DISCONNECTED', 'no result') };
+          // The link went down mid-queue: a failure to retry, not a board to skip.
+          if (it.skipped === 'aborted') return { kind: 'error', error: it.error ?? new CyError('ABORTED', 'aborted') };
           if (it.skipped) return { kind: 'skipped', reason: it.skipped };
           if (it.ok && it.result) return { kind: 'ok', durationMs: it.result.durationMs, rewinds: it.result.rewinds };
           return { kind: 'error', error: it.error };

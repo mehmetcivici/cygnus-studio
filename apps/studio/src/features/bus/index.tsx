@@ -9,6 +9,7 @@ import { DeviceCard, DeviceRow } from './DeviceCard';
 import { PowerSummary, findPowerBoard } from './PowerSummary';
 import { UnresolvedStrip } from './Unresolved';
 import { Welcome } from './Welcome';
+import { SimIntro } from './SimIntro';
 import { tBus } from './messages';
 import './bus.css';
 
@@ -55,6 +56,7 @@ export function BusScreen(_props: FeatureProps) {
   const q = useDeferredValue(query.trim());
   const { shown, groups } = useGroups(devices, groupBy, q, lang);
   const power = findPowerBoard(devices);
+  const online = devices.filter((d) => d.online).length;
 
   if (phase === 'idle' || phase === 'error' || (phase === 'connecting' && devices.length === 0)) {
     return (
@@ -78,8 +80,10 @@ export function BusScreen(_props: FeatureProps) {
       icon={Network}
       actions={
         <>
-          <span className="bus-count">{tBus('count', { shown, total: devices.length })}</span>
-          <TextField value={query} onChange={setQuery} icon={Search} placeholder={tBus('search')} size="sm" width={260} />
+          <span className={online < devices.length ? 'bus-count is-short' : 'bus-count'}>
+            {q ? tBus('count', { shown, total: devices.length }) : tBus('countOnline', { online, total: devices.length })}
+          </span>
+          <TextField value={query} onChange={setQuery} icon={Search} placeholder={tBus('search')} aria-label={tBus('search')} size="sm" width={260} />
           <Select<GroupBy>
             size="sm"
             value={groupBy}
@@ -105,6 +109,7 @@ export function BusScreen(_props: FeatureProps) {
       }
     >
       <div className="bus-screen">
+        <SimIntro />
         <UnresolvedStrip />
         {devices.length === 0 ? (
           <EmptyState

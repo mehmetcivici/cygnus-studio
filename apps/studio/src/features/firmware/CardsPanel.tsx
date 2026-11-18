@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Ban, Cpu, Play, RotateCcw, Wrench, X } from 'lucide-react';
 import { Button, Checkbox, EmptyState, Panel } from '../../ui';
 import { DeviceBadge, useConnection } from '../../core';
-import { fmtVersion, imageVersion } from './logic';
+import { fmtVersion, imageVersion, rowStatus } from './logic';
 import { useFwRows, type FwRow } from './rows';
 import { useFwSafety } from './safety';
 import { abortUpdate, useFwLibrary, useFwUpdate } from './store';
@@ -52,7 +52,7 @@ function Row({ row, selected, onSelect, busy, blocked, open }: { row: FwRow; sel
     }
   }
   return (
-    <li className={run ? 'fw-row has-run' : 'fw-row'} data-testid={`fw-row-${uid48}`} data-status={status}>
+    <li className={run ? 'fw-row has-run' : 'fw-row'} data-testid={`fw-row-${uid48}`} data-status={rowStatus(status, run?.state)}>
       <div className="fw-row__main">
         <Checkbox checked={selected} onChange={onSelect} ariaLabel={tFirmware('cards.selectAll')} disabled={active || status === 'legacy'} />
         <div className="fw-row__card">
@@ -70,7 +70,7 @@ function Row({ row, selected, onSelect, busy, blocked, open }: { row: FwRow; sel
           )}
         </div>
         <div className="fw-row__status">
-          <StatusBadge status={status} />
+          <StatusBadge status={rowStatus(status, run?.state)} />
         </div>
         <div className="fw-row__act">{action}</div>
       </div>

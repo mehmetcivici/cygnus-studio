@@ -1,14 +1,16 @@
 import { useMemo } from 'react';
-import { Zap } from 'lucide-react';
+import { Unplug, Zap } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { BarMeter, Panel } from '../../ui';
+import { BarMeter, EmptyState, Panel } from '../../ui';
 import { DeviceBadge, SignalTile, useSignals, type DeviceView } from '../../core';
 import { tBus } from './messages';
 
 const POWER_KEYS = ['pdh_large', 'pdh_small'];
 
+/** The distribution board; an offline one is still returned so its panel keeps its place (no layout jump). */
 export function findPowerBoard(devices: readonly DeviceView[]): DeviceView | undefined {
-  return devices.find((d) => d.online && !d.unassigned && !d.conflict && d.def && POWER_KEYS.includes(d.def.key));
+  const all = devices.filter((d) => !d.unassigned && !d.conflict && d.def && POWER_KEYS.includes(d.def.key));
+  return all.find((d) => d.online) ?? all[0];
 }
 
 /** Channel bars live in their own component so only they re-render with the signals. */
@@ -59,12 +61,18 @@ export function PowerSummary({ device }: { device: DeviceView }) {
   const hasPower = device.def?.signals.some((s) => s.key === 'power');
   return (
     <Panel title={tBus('power.title')} icon={Zap} actions={<DeviceBadge device={device} size="sm" showModel={false} />} className="bus-power">
+      {!device.online ? (
+        <EmptyState size="sm" icon={Unplug} title={tBus('power.noData')} description={tBus('power.noDataBody')} />
+      ) : (
+      <>
       <div className="bus-power__tiles">
         <SignalTile uid48={device.uid48} signal="input.voltage" label={tBus('power.input')} />
         <SignalTile uid48={device.uid48} signal="total.current" label={tBus('power.total')} />
         {hasPower && <SignalTile uid48={device.uid48} signal="power" label={tBus('power.power')} trend={false} />}
       </div>
       <ChannelBars device={device} />
+      </>
+      )}
     </Panel>
   );
 }

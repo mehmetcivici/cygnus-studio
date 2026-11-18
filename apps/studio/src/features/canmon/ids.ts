@@ -143,3 +143,23 @@ export function parseSend(idText: string, dataText: string, fd: boolean, brs: bo
   if (fd && !isValidFdLength(data.length)) return { ok: false, error: 'fdLength' };
   return { ok: true, frame: { id, data, fd, brs: fd && brs } };
 }
+
+/** Board a CTRL frame would drive, or why it cannot be sent through a drive session. */
+export type CtrlGate = { kind: 'none' } | { kind: 'target'; uid48: string } | { kind: 'blocked'; reason: 'broadcast' | 'noBoard' };
+
+/**
+ * CTRL frames only go out inside a drive session for the one board they address (hold-to-arm,
+ * automatic cut-offs). A broadcast CTRL has no single owner, so the panel refuses it.
+ */
+export function ctrlGate(id: number | null, devices: ReadonlyArray<{ uid48: string; devType: number; num: number; legacy: boolean; online: boolean }>): CtrlGate {
+  if (id === null || frameKind(id) !== 'cycan') return { kind: 'none' };
+  const f = decodeId(id);
+  if (f.cls !== Cls.CTRL) return { kind: 'none' };
+  if (f.num === 0) return { kind: 'blocked', reason: 'broadcast' };
+  const d = devices.find((x) => !x.legacy && x.online && x.devType === f.devType && x.num === f.num);
+  return d ? { kind: 'target', uid48: d.uid48 } : { kind: 'blocked', reason: 'noBoard' };
+}
+
+/** Periodic sending stops by itself after this long: a forgotten timer must not drive for ever. */
+export const PERIODIC_MAX_MS = { ctrl: 10_000, other: 60_000 } as const;
+export const periodicLimitMs = (ctrl: boolean): number => (ctrl ? PERIODIC_MAX_MS.ctrl : PERIODIC_MAX_MS.other);

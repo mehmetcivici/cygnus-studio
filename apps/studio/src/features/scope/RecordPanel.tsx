@@ -9,6 +9,8 @@ import type { PlotSignal } from './types';
 
 export interface RecordPanelProps {
   signals: readonly PlotSignal[];
+  /** High-speed mode: record every stream sample at this period instead of STATUS updates. */
+  streamPeriodUs?: number;
   /** Shows a recording in the chart (name is the file name or a label). */
   onOpen: (name: string, rec: ParsedRecording) => void;
 }
@@ -19,9 +21,10 @@ function fmtDuration(ms: number, lang: 'tr' | 'en'): string {
   return m > 0 ? `${m}:${fmtNumber(s - m * 60, 1, { lang }).padStart(4, '0')}` : `${fmtNumber(s, 1, { lang })} s`;
 }
 
-export function RecordPanel({ signals, onOpen }: RecordPanelProps) {
+export function RecordPanel({ signals, onOpen, streamPeriodUs }: RecordPanelProps) {
   const { lang } = useI18n();
   const rec = useRecorder();
+  const [exporting, setExporting] = useState<null | 'csv' | 'json' | 'inspect'>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!rec.recording) return;
@@ -37,6 +40,19 @@ export function RecordPanel({ signals, onOpen }: RecordPanelProps) {
     const parsed = parseRecording(text);
     if (parsed) onOpen(name, parsed);
     else toast.error(tScope('fileUnreadable'));
+  };
+
+  // Exports yield to the event loop between chunks: a long take must not freeze E-STOP or the UI.
+  const runExport = async (kind: 'csv' | 'json' | 'inspect'): Promise<void> => {
+    if (exporting) return;
+    setExporting(kind);
+    try {
+      if (kind === 'csv') downloadFile(recordingFileName('csv'), await sessionRecorder.exportCSV(), 'text/csv');
+      else if (kind === 'json') downloadFile(recordingFileName('json'), await sessionRecorder.exportJSON({ app: 'cygnus-studio' }), 'application/json');
+      else open(recordingFileName('json'), await sessionRecorder.exportJSON());
+    } finally {
+      setExporting(null);
+    }
   };
 
   const openFile = async (): Promise<void> => {
@@ -66,7 +82,7 @@ export function RecordPanel({ signals, onOpen }: RecordPanelProps) {
               {tScope('recStop')}
             </Button>
           ) : (
-            <Button size="sm" variant="primary" icon={Circle} disabled={channels.length === 0} onClick={() => sessionRecorder.start(channels)}>
+            <Button size="sm" variant="primary" icon={Circle} disabled={channels.length === 0} onClick={() => sessionRecorder.start(channels, streamPeriodUs !== undefined ? { streamPeriodUs } : {})}>
               {tScope('recStart')}
             </Button>
           )}
@@ -75,18 +91,21 @@ export function RecordPanel({ signals, onOpen }: RecordPanelProps) {
           </Button>
         </div>
         {channels.length === 0 && !rec.recording && <p className="scope-side__hint">{tScope('recNoSignals')}</p>}
+        {streamPeriodUs !== undefined && !rec.recording && channels.length > 0 && <p className="scope-side__hint">{tScope('recStreamHint', { hz: fmtNumber(1e6 / streamPeriodUs, 0, { lang }) })}</p>}
+        {rec.statusFallback.length > 0 && <p className="scope-side__hint">{tScope('recFallback', { n: rec.statusFallback.length })}</p>}
+        {rec.lost > 0 && <p className="scope-side__hint">{tScope('recLost', { n: fmtNumber(rec.lost, 0, { lang }) })}</p>}
         {hasTake && (
           <div className="scope-rec__export">
-            <Button size="sm" icon={FileDown} disabled={rec.recording} onClick={() => downloadFile(recordingFileName('csv'), sessionRecorder.toCSV(), 'text/csv')}>
+            <Button size="sm" icon={FileDown} disabled={rec.recording || exporting !== null} loading={exporting === 'csv'} onClick={() => void runExport('csv')}>
               CSV
             </Button>
-            <Button size="sm" icon={FileDown} disabled={rec.recording} onClick={() => downloadFile(recordingFileName('json'), sessionRecorder.toJSON({ app: 'cygnus-studio' }), 'application/json')}>
+            <Button size="sm" icon={FileDown} disabled={rec.recording || exporting !== null} loading={exporting === 'json'} onClick={() => void runExport('json')}>
               JSON
             </Button>
-            <Button size="sm" icon={LineChart} disabled={rec.recording} onClick={() => open(recordingFileName('json'), sessionRecorder.toJSON())}>
+            <Button size="sm" icon={LineChart} disabled={rec.recording || exporting !== null} loading={exporting === 'inspect'} onClick={() => void runExport('inspect')}>
               {tScope('inspect')}
             </Button>
-            <Button size="sm" variant="ghost" icon={Trash2} disabled={rec.recording} onClick={() => sessionRecorder.clear()}>
+            <Button size="sm" variant="ghost" icon={Trash2} disabled={rec.recording || exporting !== null} onClick={() => sessionRecorder.clear()}>
               {tScope('discard')}
             </Button>
           </div>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ArrowLeft,
+  ArrowRight,
   CircleCheck,
   CircleX,
   Hash,
@@ -42,7 +43,9 @@ import {
   cx,
   toast,
 } from "../../ui";
-import { groupPlan, makeConfig, normUid } from "./model";
+import { groupPlan, makeConfig, normUid, slotStatuses } from "./model";
+import { VehicleDiagram } from "./VehicleDiagram";
+import { EncoderZero } from "./EncoderZero";
 import { useLites } from "./hooks";
 import { vehicleSetup } from "./project";
 import { draft, useDraft } from "./store";
@@ -120,7 +123,8 @@ export function StepApply({
   const templateId = useDraft((s) => s.templateId) ?? tpl.id;
   const tweaks = useDraft((s) => s.tweaks);
   const customSlots = useDraft((s) => s.customSlots);
-  const { views, byUid } = useLites();
+  const { views, byUid, lites } = useLites();
+  const statuses = useMemo(() => slotStatuses(tpl, bindings, lites), [tpl, bindings, lites]);
   const [run, setRun] = useState<Run>({ phase: "idle" });
   const connected = phase === "connected" && !!bus;
 
@@ -143,7 +147,7 @@ export function StepApply({
     run.phase === "running" || run.phase === "failed"
       ? (snapshot ?? livePlan)
       : livePlan;
-  const groups = useMemo(() => (plan ? groupPlan(plan) : []), [plan]);
+  const groups = useMemo(() => (plan ? groupPlan(plan, tpl.slots.map((x) => x.id)) : []), [plan, tpl]);
   const externals = tpl.slots.filter(
     (s) => bindings[s.id]?.kind === "external",
   );
@@ -193,23 +197,35 @@ export function StepApply({
     const count = (k: ApplyStep["kind"]) =>
       r.filter((x) => x.step.kind === k).length;
     return (
-      <Panel className="vh-applydone">
-        <EmptyState
-          icon={CircleCheck}
-          title={tVehicle("apply.doneTitle")}
-          description={tVehicle("apply.doneBody", {
-            nums: count("assignNum"),
-            names: count("rename"),
-            params: count("setParam"),
-            saves: count("save"),
-          })}
-          actions={
-            <Button variant="primary" onClick={() => draft.close()}>
-              {tVehicle("apply.toLive")}
-            </Button>
-          }
-        />
-      </Panel>
+      <div className="vh-applydone">
+        <div className="vh-applydone__head" role="status">
+          <span className="vh-applydone__icon" aria-hidden>
+            <CircleCheck size={28} />
+          </span>
+          <div>
+            <h2>{tVehicle("apply.doneTitle")}</h2>
+            <p className="vh-dim">
+              {tVehicle("apply.doneBody", {
+                nums: count("assignNum"),
+                names: count("rename"),
+                params: count("setParam"),
+                saves: count("save"),
+              })}
+            </p>
+          </div>
+          <Button variant="primary" iconRight={ArrowRight} onClick={() => draft.close()}>
+            {tVehicle("apply.toLive")}
+          </Button>
+        </div>
+        <div className="vh-applydone__body">
+          <Panel className="vh-applydone__diagram">
+            <div className="vh-diagram-box">
+              <VehicleDiagram template={tpl} statuses={statuses} />
+            </div>
+          </Panel>
+          <EncoderZero tpl={tpl} bindings={bindings} />
+        </div>
+      </div>
     );
   }
 

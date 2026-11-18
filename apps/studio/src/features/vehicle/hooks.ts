@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useReducer } from 'react';
 import type { VehicleTemplate } from '@cygnus/vehicles';
 import { signalHub, useDevices, useProject, type DeviceView } from '../../core';
-import { baseTemplate, effectiveTemplate, slotStatuses, type DeviceLite, type SlotStatus } from './model';
+import { baseTemplate, effectiveTemplate, repairVehicleConfig, slotStatuses, type DeviceLite, type SlotStatus } from './model';
 import { vehicleSetup } from './project';
 import { useDraft } from './store';
 
@@ -35,13 +35,16 @@ export function useDraftTemplate(): { base: VehicleTemplate | undefined; tpl: Ve
 
 /** The saved vehicle (project), its template and slot states. */
 export function useSavedVehicle() {
-  const cfg = useProject((s) => s.project.vehicle);
+  const stored = useProject((s) => s.project.vehicle);
   const setup = vehicleSetup.use();
   const { lites } = useLites();
-  const tpl = useMemo(() => (cfg ? baseTemplate(cfg.templateId, setup.customSlots) : undefined), [cfg, setup.customSlots]);
+  const tpl = useMemo(() => (stored ? baseTemplate(stored.templateId, setup.customSlots) : undefined), [stored, setup.customSlots]);
+  // A hand-edited or corrupt project must never take the screen down: render the repaired copy.
+  const repaired = useMemo(() => (stored ? repairVehicleConfig(stored, tpl ? new Set(tpl.slots.map((s) => s.id)) : undefined) : null), [stored, tpl]);
+  const cfg = repaired?.config ?? null;
   const eff = useMemo(() => (tpl && cfg ? effectiveTemplate(tpl, setup.tweaks, cfg.bindings) : undefined), [tpl, cfg, setup.tweaks]);
   const statuses = useMemo<Record<string, SlotStatus>>(() => (eff && cfg ? slotStatuses(eff, cfg.bindings, lites) : {}), [eff, cfg, lites]);
-  return { cfg, setup, tpl: eff, statuses };
+  return { cfg, setup, tpl: eff, statuses, dropped: repaired?.dropped ?? [], unknownTemplate: !!stored && !tpl };
 }
 
 export interface SignalRef {

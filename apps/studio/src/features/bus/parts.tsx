@@ -7,8 +7,10 @@ import { connection, describeError, formatSignal, modelText, primarySignals, sel
 import { navigate } from '../../app/nav';
 import { tBus } from './messages';
 
-const NAME_BYTES = 21;
+export const NAME_BYTES = 21;
 const encoder = new TextEncoder();
+/** Board names are stored as UTF-8: ç, ğ, ş … take two bytes each. */
+export const nameBytes = (s: string): number => encoder.encode(s).length;
 
 /** Board name with in-place rename (Enter saves, Esc cancels). */
 export function RenameName({ device, className }: { device: DeviceView; className?: string }) {
@@ -28,8 +30,8 @@ export function RenameName({ device, className }: { device: DeviceView; classNam
       setEditing(false);
       return;
     }
-    if (encoder.encode(name).length > NAME_BYTES) {
-      toast.warn(tBus('card.nameTooLong'));
+    if (nameBytes(name) > NAME_BYTES) {
+      toast.warn(tBus('card.nameTooLong', { max: NAME_BYTES }));
       return;
     }
     setBusy(true);
@@ -44,15 +46,21 @@ export function RenameName({ device, className }: { device: DeviceView; classNam
     }
   };
   if (editing) {
+    const used = nameBytes(value.trim());
     return (
+      <span className={cx('bus-rename-wrap', className)}>
       <input
         ref={input}
-        className={cx('bus-rename', className)}
+        className="bus-rename"
         value={value}
         disabled={busy}
-        maxLength={40}
         placeholder={placeholder}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          // The board stores 21 bytes of UTF-8: stop typing at the limit instead of failing on save.
+          const next = e.target.value;
+          if (nameBytes(next.trim()) <= NAME_BYTES || next.length < value.length) setValue(next);
+          else toast.warn(tBus('card.nameTooLong', { max: NAME_BYTES }), { id: 'rename-limit' });
+        }}
         onBlur={() => void commit()}
         onKeyDown={(e) => {
           if (e.key === 'Enter') void commit();
@@ -62,7 +70,12 @@ export function RenameName({ device, className }: { device: DeviceView; classNam
           }
         }}
         aria-label={tBus('card.rename')}
+        aria-describedby={`rename-count-${device.uid48}`}
       />
+        <span id={`rename-count-${device.uid48}`} className={cx('bus-rename__count cy-mono', used >= NAME_BYTES && 'is-full')} title={tBus('card.nameBytesHint')}>
+          {used}/{NAME_BYTES}
+        </span>
+      </span>
     );
   }
   return (

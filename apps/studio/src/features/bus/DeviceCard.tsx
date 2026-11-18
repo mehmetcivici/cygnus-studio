@@ -1,4 +1,5 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
+import { Unplug } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { Badge, StatusDot, cx } from '../../ui';
 import { FaultList, ModelIcon, fmtFw, modelText, type DeviceView } from '../../core';
@@ -7,13 +8,41 @@ import { DeviceActions, LiveValues, RenameName, openDevice } from './parts';
 
 const TONE = { ok: 'ok', warn: 'warn', fault: 'danger', boot: 'accent', offline: undefined } as const;
 
+/** When each board was first seen offline (kept across screen visits). */
+const lostSince = new Map<string, number>();
+
+function agoText(ms: number, fmt: (v: number, d: number) => string): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? tBus('card.agoS', { n: fmt(s, 0) }) : tBus('card.agoM', { n: fmt(Math.floor(s / 60), 0) });
+}
+
+/** "Lost · 12 s ago": a lost board must read as a problem, not only as a faded card. */
+function LostBadge({ device }: { device: DeviceView }) {
+  const { fmtNumber } = useI18n();
+  const [now, setNow] = useState(() => Date.now());
+  let since = lostSince.get(device.uid48);
+  if (since === undefined) {
+    since = now;
+    lostSince.set(device.uid48, since);
+  }
+  useEffect(() => {
+    const h = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(h);
+  }, []);
+  return (
+    <Badge size="sm" tone="danger" icon={Unplug}>
+      {tBus('card.lostAgo', { ago: agoText(now - since, (v, d) => fmtNumber(v, d)) })}
+    </Badge>
+  );
+}
+
 function Flags({ device }: { device: DeviceView }) {
-  const { t } = useI18n();
+  if (device.online) lostSince.delete(device.uid48);
   return (
     <>
       {device.unassigned && <Badge size="sm" tone="warn">{tBus('unresolved.unassigned')}</Badge>}
       {device.conflict && <Badge size="sm" tone="warn">{tBus('unresolved.conflict', { num: device.num })}</Badge>}
-      {!device.online && <Badge size="sm">{t('status.offline')}</Badge>}
+      {!device.online && <LostBadge device={device} />}
       {device.bootloader && <Badge size="sm" tone="accent">{tBus('card.bootloader')}</Badge>}
       {device.flags.enabled && <Badge size="sm" tone="danger" variant="solid">{tBus('card.enabled')}</Badge>}
       {device.flags.unsaved && <Badge size="sm" tone="caution" variant="outline">{tBus('card.unsaved')}</Badge>}

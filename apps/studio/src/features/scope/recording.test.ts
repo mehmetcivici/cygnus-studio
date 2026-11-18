@@ -75,3 +75,17 @@ describe('static session', () => {
     expect(recordingFileName('csv', new Date(2026, 3, 2, 5, 6, 7))).toBe('cygnus-scope-20260402-050607.csv');
   });
 });
+
+describe('parseRecording on damaged files', () => {
+  it('drops NaN and backwards times instead of breaking the time axis', () => {
+    const json = JSON.stringify({ format: 'cygnus-recording', channels: [{ label: 'a', t_ms: [0, 'x', 20, 10, 30], v: [1, 2, 3, 4, 5] }] });
+    const r = parseRecording(json);
+    expect(r?.channels[0]?.t).toEqual([0, 0.02, 0.03]);
+    const csv = 'time_s,x\n0,1\nfoo,2\n0.5,3\n0.2,4\n1,5\n';
+    expect(parseRecording(csv)?.channels[0]?.t).toEqual([0, 0.5, 1]);
+  });
+
+  it('undoes the formula guard in column titles', () => {
+    expect(splitTitle("'=evil [V]")).toEqual({ label: '=evil', unit: 'V' });
+  });
+});

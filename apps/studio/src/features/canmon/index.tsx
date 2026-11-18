@@ -23,6 +23,9 @@ function stamp(d = new Date()): string {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 }
 
+const EXPORT_SLICE = 2000;
+const yieldToLoop = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 export function CanMonitorScreen(_props: FeatureProps) {
   const { t, lang } = useI18n();
   const bus = useBus();
@@ -90,23 +93,40 @@ export function CanMonitorScreen(_props: FeatureProps) {
   );
 
   // --- export -------------------------------------------------------------------------
-  const filteredFrames = (): TracedFrame[] => {
+  // Up to 50 k frames are filtered and decoded; work in slices and yield between them so the
+  // E-STOP shortcut and the drive loop stay responsive during an export.
+  const [exporting, setExporting] = useState(false);
+  const filteredFrames = async (): Promise<TracedFrame[]> => {
     const m = compileFilter(filter);
     const out: TracedFrame[] = [];
-    for (let i = 0; i < frameTrace.length; i++) {
+    const snapAt = frameTrace.length;
+    for (let i = 0; i < snapAt; i++) {
       const f = frameTrace.get(i);
       if (f && m.match({ id: f.id, dir: f.dir, flags: snap.flagsOf(f.seq) }, f.data)) out.push(f);
+      if (i % EXPORT_SLICE === EXPORT_SLICE - 1) await yieldToLoop();
     }
     return out;
   };
-  const exportCsv = (): void => {
-    const rows = filteredFrames().map((frame) => ({
-      frame,
-      summary: bus ? bus.describeFrame({ id: frame.id, data: frame.data, fd: frame.fd, brs: frame.brs, timestamp: frame.t }, lang).summary : '',
-    }));
-    downloadFile(`cygnus-can-${stamp()}.csv`, toCsv(rows), 'text/csv');
+  const runExport = async (kind: 'csv' | 'candump'): Promise<void> => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const frames = await filteredFrames();
+      if (kind === 'candump') {
+        downloadFile(`cygnus-can-${stamp()}.log`, toCandump(frames), 'text/plain');
+        return;
+      }
+      const rows: Array<{ frame: TracedFrame; summary: string }> = [];
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i]!;
+        rows.push({ frame, summary: bus ? bus.describeFrame({ id: frame.id, data: frame.data, fd: frame.fd, brs: frame.brs, timestamp: frame.t }, lang).summary : '' });
+        if (i % EXPORT_SLICE === EXPORT_SLICE - 1) await yieldToLoop();
+      }
+      downloadFile(`cygnus-can-${stamp()}.csv`, toCsv(rows), 'text/csv');
+    } finally {
+      setExporting(false);
+    }
   };
-  const exportCandump = (): void => downloadFile(`cygnus-can-${stamp()}.log`, toCandump(filteredFrames()), 'text/plain');
 
   // --- render -------------------------------------------------------------------------
   const filterOn = isFilterActive(filter);
@@ -144,10 +164,10 @@ export function CanMonitorScreen(_props: FeatureProps) {
           <Button size="sm" variant="secondary" icon={Trash2} onClick={doClear} disabled={!hasFrames}>
             {tCanMonitor('clear')}
           </Button>
-          <Button size="sm" variant="secondary" icon={FileDown} onClick={exportCsv} disabled={!hasFrames} title={tCanMonitor('exportHint')}>
+          <Button size="sm" variant="secondary" icon={FileDown} onClick={() => void runExport('csv')} disabled={!hasFrames || exporting} loading={exporting} title={tCanMonitor('exportHint')}>
             CSV
           </Button>
-          <Button size="sm" variant="secondary" icon={FileDown} onClick={exportCandump} disabled={!hasFrames} title={tCanMonitor('exportHint')}>
+          <Button size="sm" variant="secondary" icon={FileDown} onClick={() => void runExport('candump')} disabled={!hasFrames || exporting} title={tCanMonitor('exportHint')}>
             candump
           </Button>
         </>
@@ -197,7 +217,7 @@ export function CanMonitorScreen(_props: FeatureProps) {
       }
     >
       <div className="canmon">
-        <StatsStrip snap={snap} stats={stats} online={connected} />
+        <StatsStrip rates={snap.rates} stats={stats} online={connected} />
         <div className={detail ? 'canmon__main has-detail' : 'canmon__main'}>
           <div className="canmon__table">
             {view === 'stream' ? (

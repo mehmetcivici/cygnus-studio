@@ -68,7 +68,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 4px;
+  padding: 8px 0;
+  /* The next-step button stays reachable however tall the step is. */
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--cy-bg);
+  border-top: 1px solid var(--cy-line-soft);
 }
 .vh-diagram-box {
   display: flex;
@@ -1376,4 +1382,33 @@ button.vh-issue:hover {
 }
 .vh-seq {
   margin-bottom: 12px;
+}
+
+/* ---------- apply success ---------- */
+.vh-applydone { display: flex; flex-direction: column; gap: var(--cy-sp-3); min-height: 0; }
+.vh-applydone__head {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--cy-ok) 45%, transparent);
+  background: color-mix(in srgb, var(--cy-ok) 10%, var(--cy-panel));
+  border-radius: var(--cy-r-md);
+}
+.vh-applydone__head h2 { margin: 0 0 2px; font-size: var(--cy-fs-lg); }
+.vh-applydone__head p { margin: 0; }
+.vh-applydone__head > div { flex: 1; min-width: 0; }
+.vh-applydone__icon { color: var(--cy-ok); display: inline-flex; }
+.vh-applydone__body { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1fr); gap: var(--cy-sp-3); align-items: start; }
+@media (max-width: 1200px) { .vh-applydone__body { grid-template-columns: 1fr; } }
+
+/* ---------- encoder zero ---------- */
+.vh-zero__steps { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 4px; }
+.vh-zero__list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.vh-zero__row { display: grid; grid-template-columns: minmax(120px, 1fr) 72px auto auto; align-items: center; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--cy-line-soft); }
+.vh-zero__angle { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------- motor test question ---------- */
+.vh-test__ask {
+  display: grid; gap: 6px; margin-top: 10px; padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--cy-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--cy-accent) 8%, transparent);
+  border-radius: var(--cy-r-md);
 }

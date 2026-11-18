@@ -96,27 +96,87 @@ interface Geom {
   cy: number;
   w: number;
   h: number;
+  /** Half size of the chassis frame (rect/rov bodies), grown to enclose every slot. */
+  fw: number;
+  fh: number;
+  /** Compass ring radius: outside the frame so its labels never sit on it. */
+  ring: number;
   px: (p: { x: number; y: number }) => { x: number; y: number };
 }
 
-/** Margins leave room for labels, arrows and the compass ring; previews crop tighter. */
+/** Room around a slot centre for its wheel, module box, label and group title. */
+const SLOT_REACH_X = R + 30;
+const SLOT_REACH_Y = R + 44;
+/** Slots of one module (e.g. swerve drive/steer/encoder) are spread to at least this distance. */
+const MIN_GROUP_GAP = 70;
+
+/**
+ * Margins leave room for labels, arrows and the compass ring; previews crop tighter. Boxy
+ * bodies grow to enclose the slots so modules never hang over the frame edge.
+ */
 function geometry(tpl: VehicleTemplate, compact: boolean): Geom {
   const m = compact ? 18 : 50;
   const nose = compact ? 10 : 22;
   const hx = U * Math.max(tpl.size.w, 0.8);
   const hy = U * Math.max(tpl.size.h, 0.8);
-  const cx = m + hx;
-  const cy = m + nose + hy;
+  const boxy = tpl.shape === "rect" || tpl.shape === "rov";
+  let fw = (tpl.shape === "rov" ? 0.9 : 0.86) * hx;
+  let fh = (tpl.shape === "rov" ? 0.9 : 0.86) * hy;
+  if (boxy) {
+    for (const s of tpl.slots) {
+      fw = Math.max(fw, Math.abs(s.pos.x) * hx + SLOT_REACH_X);
+      fh = Math.max(fh, Math.abs(s.pos.y) * hy + SLOT_REACH_Y);
+    }
+  }
+  const ox = Math.max(hx, fw + 0.08 * hx);
+  const oy = Math.max(hy, fh + 0.08 * hy);
+  const ring = Math.max(Math.min(hx, hy) + m * 0.55, Math.max(fw + 0.06 * hx, fh + 0.06 * hy) + 18);
+  const cx = m + ox;
+  const cy = m + nose + oy;
   return {
     m,
     hx,
     hy,
     cx,
     cy,
-    w: 2 * (m + hx),
-    h: 2 * (m + hy) + nose,
+    fw,
+    fh,
+    ring,
+    w: 2 * (m + ox),
+    h: 2 * (m + oy) + nose,
     px: (p) => ({ x: cx + p.x * hx, y: cy - p.y * hy }),
   };
+}
+
+/**
+ * Pushes the slots of each module apart around the module centre until the closest two are
+ * `MIN_GROUP_GAP` px apart, so icons, wheels, badges and arrows of one module never overlap.
+ */
+export function spreadGroups(tpl: VehicleTemplate): VehicleTemplate {
+  const hx = U * Math.max(tpl.size.w, 0.8);
+  const hy = U * Math.max(tpl.size.h, 0.8);
+  const groups = new Map<string, VehicleSlot[]>();
+  for (const s of tpl.slots) if (s.group) groups.set(s.group, [...(groups.get(s.group) ?? []), s]);
+  const moved = new Map<string, { x: number; y: number }>();
+  for (const slots of groups.values()) {
+    if (slots.length < 2) continue;
+    let dmin = Infinity;
+    for (let i = 0; i < slots.length; i++)
+      for (let j = i + 1; j < slots.length; j++) {
+        const a = slots[i]!.pos;
+        const b = slots[j]!.pos;
+        dmin = Math.min(dmin, Math.hypot((a.x - b.x) * hx, (a.y - b.y) * hy));
+      }
+    if (!(dmin > 0) || dmin >= MIN_GROUP_GAP) continue;
+    const k = MIN_GROUP_GAP / dmin;
+    const c = {
+      x: slots.reduce((t, s) => t + s.pos.x, 0) / slots.length,
+      y: slots.reduce((t, s) => t + s.pos.y, 0) / slots.length,
+    };
+    for (const s of slots) moved.set(s.id, { x: c.x + (s.pos.x - c.x) * k, y: c.y + (s.pos.y - c.y) * k });
+  }
+  if (moved.size === 0) return tpl;
+  return { ...tpl, slots: tpl.slots.map((s) => (moved.has(s.id) ? { ...s, pos: moved.get(s.id)! } : s)) };
 }
 
 /** Unit vector of a heading (0 = nose, clockwise) in screen coordinates. */
@@ -150,32 +210,34 @@ function propRadius(tpl: VehicleTemplate, g: Geom): number {
 }
 
 function Body({ tpl, g }: { tpl: VehicleTemplate; g: Geom }) {
-  const { cx, cy, hx, hy, px } = g;
+  const { cx, cy, hx, hy, px, fw, fh } = g;
   const shape = tpl.shape;
   if (shape === "rect") {
+    const bw = fw + 0.06 * hx;
+    const bh = fh + 0.06 * hy;
     return (
       <g className="vd-body">
         <rect
           className="vd-frame"
-          x={cx - 0.86 * hx}
-          y={cy - 0.86 * hy}
-          width={1.72 * hx}
-          height={1.72 * hy}
+          x={cx - fw}
+          y={cy - fh}
+          width={2 * fw}
+          height={2 * fh}
           rx={16}
         />
         <rect
           className="vd-bumper"
-          x={cx - 0.92 * hx}
-          y={cy - 0.92 * hy}
-          width={1.84 * hx}
-          height={1.84 * hy}
+          x={cx - bw}
+          y={cy - bh}
+          width={2 * bw}
+          height={2 * bh}
           rx={20}
         />
         <line
           className="vd-member"
-          x1={cx - 0.86 * hx}
+          x1={cx - fw}
           y1={cy}
-          x2={cx + 0.86 * hx}
+          x2={cx + fw}
           y2={cy}
         />
       </g>
@@ -245,10 +307,10 @@ function Body({ tpl, g }: { tpl: VehicleTemplate; g: Geom }) {
     );
   }
   if (shape === "rov") {
-    const x0 = cx - 0.9 * hx;
-    const x1 = cx + 0.9 * hx;
-    const y0 = cy - 0.9 * hy;
-    const y1 = cy + 0.9 * hy;
+    const x0 = cx - fw;
+    const x1 = cx + fw;
+    const y0 = cy - fh;
+    const y1 = cy + fh;
     return (
       <g className="vd-body">
         <rect
@@ -385,18 +447,23 @@ function placeLabels(
     const out: Array<{ id: string; box: Box }> = [
       { id: s.id, box: [p.x - R - 2, p.y - R - 2, p.x + R + 2, p.y + R + 2] },
     ];
-    if (s.role === "drive")
+    if (s.role === "drive") {
       out.push({ id: s.id, box: [p.x - 11, p.y - 25, p.x + 11, p.y + 25] });
+      // The heading arrow above the wheel blocks its own label too.
+      if (s.headingDeg !== undefined) out.push({ id: `${s.id}#arrow`, box: [p.x - 7, p.y - 50, p.x + 7, p.y - 25] });
+    }
     return out;
   });
   const placed: Box[] = [];
   const out: Record<string, LabelPos> = {};
   for (const { s, p } of pts) {
     const w = text(s).length * 5.9 + 4;
+    // A wheel reaches 24 px below its centre: its label goes under the wheel.
+    const below = s.role === "drive" ? 26 : R;
     const cands: Array<{ pos: LabelPos; box: Box }> = [
       {
-        pos: { x: 0, y: R + 13, anchor: "middle" },
-        box: [p.x - w / 2, p.y + R + 3, p.x + w / 2, p.y + R + 15],
+        pos: { x: 0, y: below + 13, anchor: "middle" },
+        box: [p.x - w / 2, p.y + below + 3, p.x + w / 2, p.y + below + 15],
       },
       {
         pos: { x: 0, y: -R - 8, anchor: "middle" },
@@ -448,7 +515,7 @@ function Groups({
           const x0 = Math.min(...pts.map((p) => p.x)) - pad;
           const x1 = Math.max(...pts.map((p) => p.x)) + pad;
           const y0 = Math.min(...pts.map((p) => p.y)) - pad;
-          const y1 = Math.max(...pts.map((p) => p.y)) + pad + 12;
+          const y1 = Math.max(...pts.map((p) => p.y)) + pad + 14;
           const prefixes = new Set(
             slots.map((s) => s.label[lang].split(" · ")[0]),
           );
@@ -459,8 +526,9 @@ function Groups({
               {title && (
                 // On the side facing the vehicle centre, where the frame leaves room.
                 <text
-                  x={x0 + 8}
-                  y={(y0 + y1) / 2 < g.cy ? y1 + 13 : y0 - 6}
+                  x={(x0 + x1) / 2}
+                  y={y1 + 14}
+                  textAnchor="middle"
                   className="vd-group__title"
                 >
                   {title}
@@ -677,7 +745,7 @@ const SlotMark = memo(function SlotMark(p: SlotProps) {
         {!p.compact && p.num !== undefined && (
           <g
             className="vd-slot__num"
-            transform={`translate(${R * 0.78} ${-R * 0.78})`}
+            transform={wheel ? `translate(${R + 6} ${-R + 2})` : `translate(${R * 0.78} ${-R * 0.78})`}
           >
             <circle r={7.5} />
             <text y={3}>{p.num}</text>
@@ -722,16 +790,17 @@ export function VehicleDiagram({
   ariaLabel,
 }: VehicleDiagramProps) {
   const { lang, tl } = useI18n();
-  const g = useMemo(() => geometry(template, compact), [template, compact]);
-  const propR = useMemo(() => propRadius(template, g), [template, g]);
+  const laid = useMemo(() => spreadGroups(template), [template]);
+  const g = useMemo(() => geometry(laid, compact), [laid, compact]);
+  const propR = useMemo(() => propRadius(laid, g), [laid, g]);
   const labels = useMemo(
     () =>
       compact
         ? {}
-        : placeLabels(template.slots, g, (s) =>
+        : placeLabels(laid.slots, g, (s) =>
             tVehicle(`roleShort.${s.role}`),
           ),
-    [template, g, compact, lang],
+    [laid, g, compact, lang],
   );
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -766,11 +835,11 @@ export function VehicleDiagram({
     : undefined;
 
   const slots = moving
-    ? template.slots.map((s) =>
+    ? laid.slots.map((s) =>
         s.id === moving.id ? { ...s, pos: moving.pos } : s,
       )
-    : template.slots;
-  const shown = moving ? { ...template, slots } : template;
+    : laid.slots;
+  const shown = moving ? { ...laid, slots } : laid;
 
   return (
     <svg
@@ -798,10 +867,10 @@ export function VehicleDiagram({
     >
       {compass && (
         <g className="vd-compass">
-          <circle cx={g.cx} cy={g.cy} r={Math.min(g.hx, g.hy) + g.m * 0.55} />
+          <circle cx={g.cx} cy={g.cy} r={g.ring} />
           {(["N", "E", "S", "W"] as const).map((k, i) => {
             const d = dir(i * 90);
-            const r = Math.min(g.hx, g.hy) + g.m * 0.55;
+            const r = g.ring;
             return (
               <text key={k} x={g.cx + d.x * r} y={g.cy + d.y * r + 4}>
                 {tVehicle(`compass.${k}`)}

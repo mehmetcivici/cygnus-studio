@@ -2,16 +2,38 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Waypoints } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { Badge, Panel, cx } from '../../ui';
-import { displayName, modelIcon, useConnection, useSimulation, type DeviceView } from '../../core';
+import { displayName, modelIcon, modelText, useConnection, useSimulation, type DeviceView } from '../../core';
+
+/** Up to `lines` lines of about `width` characters, broken at spaces; the last one ends in … when cut. */
+export function wrapLabel(text: string, width: number, lines: number): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length <= width) cur = next;
+    else {
+      if (cur) out.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) out.push(cur);
+  const fit = out.map((l) => (l.length > width ? `${l.slice(0, width - 1)}…` : l));
+  if (fit.length <= lines) return fit;
+  const kept = fit.slice(0, lines);
+  const last = kept[lines - 1] ?? '';
+  kept[lines - 1] = last.length >= width ? `${last.slice(0, width - 1)}…` : `${last}…`;
+  return kept;
+}
 import { tBus } from './messages';
 import { openDevice } from './parts';
 
-const NODE_W = 84;
+const NODE_W = 92;
 const GAP = 14;
 const PITCH = NODE_W + GAP;
 const TOP = 30;
 const DROP = 26;
-const NODE_H = 62;
+const NODE_H = 72;
 const ROW_H = DROP + NODE_H + 26;
 const LEFT = 136;
 const TURN = 16;
@@ -58,7 +80,7 @@ function useTerminations(devices: readonly DeviceView[]): { count: number | null
 
 /** Single-cable picture of the bus: every board hangs off one trunk, ends terminated. */
 export function BusDiagram({ devices }: { devices: readonly DeviceView[] }) {
-  const { lang } = useI18n();
+  const { lang, tl } = useI18n();
   const isSim = useConnection((s) => s.sim !== null);
   const term = useTerminations(devices);
   const [wrapRef, avail] = useWidth();
@@ -140,7 +162,7 @@ export function BusDiagram({ devices }: { devices: readonly DeviceView[] }) {
                 className={cx('bus-diagram__node', `is-${d.status}`, !d.online && 'is-lost', bad && 'is-bad', d.flags.identify && 'is-identify')}
                 onClick={() => !bad && openDevice(d)}
               >
-                <title>{`${name} · #${d.num} · ${d.uid48}`}</title>
+                <title>{`${name} · ${tl(modelText(d))} · #${d.num} · ${d.uid48}`}</title>
                 <line x1={cx0} y1={ty + 3} x2={cx0} y2={ny} className="bus-diagram__stub" />
                 <circle cx={cx0} cy={ty} r={4} className="bus-diagram__tap" />
                 <rect x={x} y={ny} width={NODE_W} height={NODE_H} rx={9} className="bus-diagram__box" />
@@ -148,12 +170,16 @@ export function BusDiagram({ devices }: { devices: readonly DeviceView[] }) {
                 <text x={x + NODE_W - 8} y={ny + 21} textAnchor="end" className="bus-diagram__num">
                   {d.unassigned ? '#—' : `#${d.num}`}
                 </text>
-                <text x={x + 8} y={ny + 41} className="bus-diagram__name">
-                  {name.length > 11 ? `${name.slice(0, 10)}…` : name}
-                </text>
-                <text x={x + 8} y={ny + 54} className="bus-diagram__model">
-                  {(d.def?.key ?? '').toUpperCase().slice(0, 12)}
-                </text>
+                {wrapLabel(name, 12, 2).map((line, k) => (
+                  <text key={k} x={x + 8} y={ny + 37 + k * 12} className="bus-diagram__name">
+                    {line}
+                  </text>
+                ))}
+                {(!d.online || tl(modelText(d)) !== name) && (
+                  <text x={x + 8} y={ny + 64} className={d.online ? 'bus-diagram__model' : 'bus-diagram__model is-lost'}>
+                    {d.online ? wrapLabel(tl(modelText(d)), 15, 1)[0] : tBus('card.lostShort')}
+                  </text>
+                )}
                 {bad && (
                   <g className="bus-diagram__warn">
                     <circle cx={x + NODE_W - 4} cy={ny + 4} r={8} />

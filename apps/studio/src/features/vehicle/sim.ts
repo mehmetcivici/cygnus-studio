@@ -7,15 +7,11 @@ export const hasSimScenario = (templateId: string): boolean => scenarios.some((s
 
 /**
  * Starts the template's simulated vehicle with factory-fresh boards (number 63, no name,
- * default parameters), as a team gets them out of the box. The connection manager cannot pass
- * scenario options, so the assigned scenario is started and every board is reset in place.
+ * default parameters), as a team gets them out of the box.
  */
 export async function startSimVehicle(templateId: string): Promise<boolean> {
-  const ok = await connection.connect({ kind: 'sim', scenarioId: simScenarioId(templateId) });
-  const sim = useConnection.getState().sim;
-  if (!ok || !sim) return false;
-  for (const n of sim.nodes) sim.factoryReset(n.id);
-  return true;
+  const ok = await connection.connectScenario(simScenarioId(templateId), { assigned: false });
+  return ok && useConnection.getState().sim !== null;
 }
 
 /** "Turn it by hand" on the simulated shaft behind a slot. */

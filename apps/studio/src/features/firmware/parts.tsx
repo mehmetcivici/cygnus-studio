@@ -1,13 +1,15 @@
-import { Check, Circle, CircleAlert, CircleX, Cpu, Info, MinusCircle, TriangleAlert } from 'lucide-react';
+import { Check, Circle, CircleAlert, CircleX, Cpu, Info, Loader, MinusCircle, TriangleAlert } from 'lucide-react';
 import type { FirmwarePhase } from '@cygnus/protocol';
 import { useI18n } from '../../i18n';
 import { Badge, Checkbox, ProgressBar, Spinner, cx, type Tone } from '../../ui';
 import type { CardRun } from './store';
-import { LOW_VOLTAGE_V, type CardStatus } from './logic';
+import { LOW_VOLTAGE_V, type RowStatus } from './logic';
 import type { FwSafety } from './safety';
 import { tFirmware } from './messages';
 
-export const STATUS_TONE: Record<CardStatus, Tone> = {
+export const STATUS_TONE: Record<RowStatus, Tone> = {
+  queued: 'neutral',
+  updating: 'accent',
   upToDate: 'ok',
   updateAvailable: 'accent',
   ahead: 'neutral',
@@ -120,10 +122,10 @@ export function RunBlock({ run }: { run: CardRun }) {
   );
 }
 
-export function StatusBadge({ status }: { status: CardStatus }) {
+export function StatusBadge({ status }: { status: RowStatus }) {
   const hint = status === 'hwIncompatible' || status === 'bootloader' || status === 'legacy' || status === 'noImage' ? tFirmware(`statusHint.${status}`) : undefined;
   return (
-    <Badge tone={STATUS_TONE[status]} title={hint} icon={status === 'bootloader' ? Cpu : undefined}>
+    <Badge tone={STATUS_TONE[status]} title={hint} icon={status === 'bootloader' ? Cpu : status === 'updating' ? Loader : undefined}>
       {tFirmware(`status.${status}`)}
     </Badge>
   );

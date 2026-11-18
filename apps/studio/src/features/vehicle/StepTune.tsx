@@ -30,6 +30,7 @@ import {
 import { draft, useDraft } from "./store";
 import { BindingText } from "./SlotInspector";
 import { MotorTest } from "./MotorTest";
+import { EncoderZero } from "./EncoderZero";
 import { ROLE_ICON, VehicleDiagram } from "./VehicleDiagram";
 import { tVehicle } from "./messages";
 
@@ -101,6 +102,7 @@ export function StepTune({
                   <th>{tVehicle("tune.colInvert")}</th>
                   <th>{tVehicle("tune.colGear")}</th>
                   {propellers && <th>{tVehicle("tune.colSpin")}</th>}
+                  <th>{tVehicle("tune.colTested")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -235,6 +237,21 @@ export function StepTune({
                           )}
                         </td>
                       )}
+                      <td>
+                        {!isActuator(s) ? (
+                          <span className="vh-dim">—</span>
+                        ) : checked[s.id] === true ? (
+                          <Badge tone="ok" size="sm" icon={CircleCheck}>
+                            {tVehicle("tune.tested")}
+                          </Badge>
+                        ) : checked[s.id] === false ? (
+                          <Badge tone="warn" size="sm">
+                            {tVehicle("tune.retest")}
+                          </Badge>
+                        ) : (
+                          <span className="vh-dim vh-small">{tVehicle("tune.untested")}</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -290,40 +307,16 @@ export function StepTune({
                   binding={bindings[slot.id]}
                   propellers={propellers}
                   invert={tweaks[slot.id]?.invert}
+                  onAnswer={(a) =>
+                    setChecked((c) => ({ ...c, [slot.id]: a === "ok" }))
+                  }
                 />
-              )}
-              {slot.spin && (
-                <div className="vh-test__row">
-                  <Button
-                    size="sm"
-                    icon={CircleCheck}
-                    onClick={() =>
-                      setChecked((c) => ({ ...c, [slot.id]: true }))
-                    }
-                  >
-                    {tVehicle("tune.spinOk")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={TriangleAlert}
-                    onClick={() => {
-                      draft.setTweak(slot.id, {
-                        invert: !(tweaks[slot.id]?.invert ?? false)
-                          ? true
-                          : undefined,
-                      });
-                      setChecked((c) => ({ ...c, [slot.id]: false }));
-                    }}
-                  >
-                    {tVehicle("tune.spinWrong")}
-                  </Button>
-                </div>
               )}
             </>
           )}
         </Panel>
       </div>
+      <EncoderZero tpl={tpl} bindings={bindings} />
       <div className="vh-stepfoot">
         <Button variant="ghost" icon={ArrowLeft} onClick={onBack}>
           {tVehicle("back")}

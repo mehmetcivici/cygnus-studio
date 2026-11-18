@@ -35,4 +35,4 @@ export function isVehicleSetup(v: unknown): v is VehicleSetup {
   return isObj(v) && Array.isArray(v.customSlots) && v.customSlots.every(isVehicleSlot) && isObj(v.tweaks) && Object.values(v.tweaks).every(isTweak);
 }
 
-export const vehicleSetup = defineProjectSection<VehicleSetup>('vehicle.setup', { initial: { customSlots: [], tweaks: {} }, guard: isVehicleSetup });
+export const vehicleSetup = defineProjectSection<VehicleSetup>('vehicle.setup', { initial: { customSlots: [], tweaks: {} }, validate: isVehicleSetup });

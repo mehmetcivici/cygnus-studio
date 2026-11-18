@@ -321,7 +321,7 @@ export function ScopeScreen({ params }: FeatureProps) {
             onMove={(id, pane) => edit((l) => moveSignal(l, id, pane, unitOf))}
           />
           {!session && <TriggerPanel signals={plotSignals} view={view} />}
-          {!session && <RecordPanel signals={plotSignals} onOpen={openRecording} />}
+          {!session && <RecordPanel signals={plotSignals} onOpen={openRecording} streamPeriodUs={mode === 'normal' ? undefined : stored.periodUs} />}
         </aside>
       </div>
       <Modal
