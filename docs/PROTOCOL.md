@@ -97,11 +97,18 @@ Gönderim hatası olursa kart yeniden göndermeyi iptal eder ve 0–100 ms rastg
 ### 3.3 ASSIGN_ID
 
 `ASSIGN_ID` (SYS_REQ/1, yayın): `[uid48 6B] [new_num u8] [flags u8]` — `flags bit0` = kalıcı yaz.
-Yalnızca `uid48`'i eşleşen kart uygular, çakışma durumundan çıkar ve onay olarak `ENUM_RSP` gönderir.
+Yalnızca `uid48`'i eşleşen kart uygular, çakışma durumundan çıkar ve onay olarak 50 ms içinde `ENUM_RSP` gönderir (kalıcı yazma onaydan sonra yapılabilir). Host onayı 250 ms bekler, 3 kez dener.
 
 ### 3.4 Çakışma algılama
 
-Kart, kendi (DEVTYPE, NUM) adresinden gelen ama `uid16`'sı farklı bir `HEARTBEAT` görürse **CONFLICT** durumuna geçer. CONFLICT ve atanmamış (`NUM = 63`) kartlar:
+Kart şu iki durumdan birinde **CONFLICT** durumuna geçer:
+
+- kendi (DEVTYPE, NUM) adresinden gelen ama `uid16`'sı farklı bir `HEARTBEAT` görürse,
+- kendi DEVTYPE ve NUM'unu taşıyan ama `uid48`'i farklı bir `ENUM_RSP` görürse.
+
+CONFLICT'e geçen kart hemen (0–20 ms rastgele gecikmeyle) CONFLICT bayraklı bir `ENUM_RSP` yayınlar; böylece aynı numaradaki diğer kart da CONFLICT'e geçer. Sonuç belirlenimcidir: aynı numarayı paylaşan kartların **hepsi** susar, hangisinin "kazandığı" açılış sırasına bağlı kalmaz. CONFLICT kalıcı değildir (yeniden başlatınca yeniden algılanır) ve yalnızca kartın `uid48`'ine gelen `ASSIGN_ID` ile biter (aynı numara yeniden atanabilir).
+
+CONFLICT ve atanmamış (`NUM = 63`) kartlar:
 
 - HEARTBEAT, STATUS, STREAM göndermez; CTRL kabul etmez (eyleyiciler nötr),
 - yalnızca `ENUM_REQ`, `ASSIGN_ID` ve `IDENTIFY` (UID'li biçim) çerçevelerine yanıt verir.
@@ -146,7 +153,7 @@ Uzun işlemler önce `IN_PROGRESS`, bitince `OK/FAILED` + `result` yollar. `SELF
 
 ### 4.6 FAULT_REQ (SYS_REQ/6) → FAULT_RSP (SYS_RSP/6) `[active u16] [sticky u16] [warn u16] [0 0]`
 
-Ortak hata bitleri: `0 UNDERVOLT · 1 OVERVOLT · 2 OVERCURRENT · 3 OVERTEMP · 4 CTRL_TIMEOUT · 5 SENSOR · 6 HARDWARE · 7 PARAM_CRC · 8 CAN_ERR · 9 ESTOP`; `10..15` modele özgü (katalog). `sticky`, `CLEAR_FAULTS`'a kadar kalır.
+Ortak hata bitleri: `0 UNDERVOLT · 1 OVERVOLT · 2 OVERCURRENT · 3 OVERTEMP · 4 CTRL_TIMEOUT · 5 SENSOR · 6 HARDWARE · 7 PARAM_CRC · 8 CAN_ERR · 9 ESTOP`; `10..15` modele özgü (katalog). `sticky`, `CLEAR_FAULTS`'a kadar kalır. HEARTBEAT yalnızca etkin hataları taşır; host etkin maske veya WARNING biti değişince `FAULT_REQ` ile ayrıntıyı okur.
 
 ### 4.7 ESTOP (SYS_REQ/7, yayın) `[0xE5 0x70]`
 
@@ -190,6 +197,8 @@ CTRL/0 SET: [mode u8] [flags u8] [0 0] [value f32]
 
 `flags` ayrılmıştır; host 0 gönderir, kart yok sayar.
 
+**Nötr komut**: `SET` biçiminde `mode = 0, value = 0`; darbe biçiminde (servo kartı) tüm darbeler 0. Host bir kontrol döngüsünü bitirirken nötr komutu bir kez gönderir.
+
 ## 8. Yüksek hızlı akış (STREAM) — tuner grafikleri
 
 Her telemetri sinyalinin katalogda bir `sid`'i vardır ve `f32` olarak akıtılabilir.
@@ -221,7 +230,9 @@ status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ER
 
 - Kart `BEGIN` sonrası (silme sürerken `BUSY`, bitince `OK`), her `window` DATA çerçevesinde bir (varsayılan 16), sıra bozulunca (`BAD_OFFSET` + beklenen `next_offset`) ve `END` sonrası `ACK` yollar.
 - Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Yalnızca son `DATA` parçası kısa olabilir; `size`'ı aşan dolgu baytları yok sayılır.
+- Pencere sayacı her `ACK`'tan sonra (BAD_OFFSET dahil) sıfırlanır. Son, eksik kalan pencere için ayrıca `ACK` gönderilmez; onu `END`'in `ACK`'ı kapatır.
 - Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner.
+- Bootloader `HEARTBEAT` (state = BOOTLOADER), `ENUM_REQ`, `ASSIGN_ID`, `IDENTIFY`, `INFO_REQ` sayfa 0–2 ve `COMMAND REBOOT`'a yanıt verir; diğer her şeye yanıtsız kalır.
 
 ### 9.1 `.cyfw` dosyası
 
