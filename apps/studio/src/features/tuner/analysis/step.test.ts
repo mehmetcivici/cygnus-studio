@@ -140,4 +140,18 @@ describe('stepMetrics', () => {
     expect(m.riseTime).toBeCloseTo(tau * Math.log(9), 2);
     expect(m.overshoot).toBe(0);
   });
+
+  // Regression (review tasarim B15): the flywheel stopped at 44 % of the target and every time
+  // metric was green.
+  it('a response that does not reach the target is never graded good', () => {
+    const t = Array.from({ length: 3000 }, (_, i) => i * 0.001);
+    const target = t.map((x) => (x >= 0.2 ? 100 : 0));
+    const measured = t.map((x) => (x >= 0.2 ? 44 * (1 - Math.exp(-(x - 0.2) / 0.05)) : 0));
+    const m = stepMetrics(t, target, measured, detectSteps(t, target)[0]!);
+    const g = gradeStep(m);
+    expect(g.reached).toBe(false);
+    expect(g.tips[0]).toBe('notReached');
+    for (const k of ['riseTime', 'overshoot', 'settlingTime', 'damping'] as const) expect(g.grades.find((x) => x.key === k)?.grade).not.toBe('good');
+    expect(g.grades.find((x) => x.key === 'steadyError')?.grade).toBe('poor');
+  });
 });

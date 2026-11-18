@@ -1,19 +1,23 @@
 import { useMemo, useState } from 'react';
 import { History } from 'lucide-react';
-import { paramByKey } from '@cygnus/protocol';
+import { CommandStatus, isCyError, paramByKey } from '@cygnus/protocol';
 import { useI18n } from '../../../i18n';
 import { Button, Checkbox, Modal, ProgressBar, SegmentedControl, toast } from '../../../ui';
-import { paramCache, type DeviceView } from '../../../core';
+import { describeError, paramCache, type DeviceView } from '../../../core';
 import { diffFromSaved } from '../logic/baseline';
 import type { DiffRow } from '../logic/paramFile';
 import { rebootDevice, saveDevice, writeValues } from '../ops';
 import { tDevice } from '../messages';
 import { DiffTable } from './DiffTable';
 
-type Way = 'write' | 'reboot';
+type Way = 'load' | 'write' | 'reboot';
+
+/** Boards whose firmware answered LOAD_SAVED with UNSUPPORTED (older firmware): asked once. */
+const noLoadSaved = new Set<string>();
 
 /**
- * "Revert to saved": either write back the values the board last saved (remembered by the
+ * "Revert to saved": preferably LOAD_SAVED (the board reloads its flash into RAM, exact and
+ * without a reboot); on firmware without it, write back the values the board last saved (remembered by the
  * Studio, no reboot) or reboot so the board loads its flash. Optionally re-reads afterwards.
  */
 export function RevertDialog({ device, onClose }: { device: DeviceView; onClose: () => void }) {
@@ -21,7 +25,9 @@ export function RevertDialog({ device, onClose }: { device: DeviceView; onClose:
   const def = device.def;
   const diff = useMemo(() => diffFromSaved(device.handle), [device.handle]);
   const known = diff.writes.length > 0 || diff.unknown.length === 0;
-  const [way, setWay] = useState<Way>(known ? 'write' : 'reboot');
+  const canLoad = typeof device.handle.loadSaved === 'function' && device.handle.capabilities.commands && !noLoadSaved.has(device.uid48);
+  const [way, setWay] = useState<Way>(canLoad ? 'load' : known ? 'write' : 'reboot');
+  const { lang } = useI18n();
   const [reread, setReread] = useState(true);
   const [progress, setProgress] = useState<number | null>(null);
   const rows: DiffRow[] = useMemo(
@@ -33,7 +39,23 @@ export function RevertDialog({ device, onClose }: { device: DeviceView; onClose:
 
   const run = async (): Promise<void> => {
     setProgress(0);
-    if (way === 'write') {
+    if (way === 'load') {
+      try {
+        await h.loadSaved();
+        await paramCache.loadAll(device.uid48).catch(() => undefined);
+        toast.success(tDevice('revert.loaded'));
+      } catch (e) {
+        // Older firmware: remember it and offer the other ways.
+        if (isCyError(e, 'REJECTED') && e.status === CommandStatus.UNSUPPORTED) {
+          noLoadSaved.add(device.uid48);
+          toast.warn(tDevice('revert.loadUnsupported'));
+          setWay(known ? 'write' : 'reboot');
+          setProgress(null);
+          return;
+        }
+        toast.error(tDevice('revert.loadFailed'), { description: describeError(e, lang) });
+      }
+    } else if (way === 'write') {
       const failed = await writeValues(
         h,
         diff.writes.map((w) => ({ key: w.key, value: w.to })),
@@ -72,10 +94,10 @@ export function RevertDialog({ device, onClose }: { device: DeviceView; onClose:
               variant="primary"
               icon={History}
               loading={progress !== null}
-              disabled={!device.online || (way === 'reboot' && device.flags.enabled)}
+              disabled={!device.online || (way !== 'write' && device.flags.enabled)}
               onClick={() => void run()}
             >
-              {way === 'write' ? tDevice('revert.write', { count: diff.writes.length }) : tDevice('revert.reboot')}
+              {way === 'load' ? tDevice('revert.load') : way === 'write' ? tDevice('revert.write', { count: diff.writes.length }) : tDevice('revert.reboot')}
             </Button>
           </>
         )
@@ -91,11 +113,14 @@ export function RevertDialog({ device, onClose }: { device: DeviceView; onClose:
               onChange={setWay}
               block
               options={[
+                ...(canLoad ? [{ value: 'load' as const, label: tDevice('revert.wayLoad') }] : []),
                 { value: 'write', label: tDevice('revert.wayWrite'), disabled: !known },
                 { value: 'reboot', label: tDevice('revert.wayReboot') },
               ]}
             />
-            {way === 'write' ? (
+            {way === 'load' ? (
+              <p className="dv-note">{device.flags.enabled ? tDevice('settings.lockedEnabled') : tDevice('revert.loadHelp')}</p>
+            ) : way === 'write' ? (
               <>
                 <p className="dv-note">{tDevice('revert.writeHelp')}</p>
                 {diff.unknown.length > 0 && <p className="dv-note dv-warntext">{tDevice('revert.unknown', { count: diff.unknown.length })}</p>}

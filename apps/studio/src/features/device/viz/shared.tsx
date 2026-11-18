@@ -128,13 +128,16 @@ export function CenterBar({ value, min, max, label, text, unit, tone = 'accent' 
   const v = Number.isFinite(value) ? Math.min(1, Math.max(0, (value - min) / span)) : zero;
   const left = Math.min(zero, v);
   const width = Math.abs(v - zero);
+  const { lang } = useI18n();
+  const pctFirst = unit === '%' && lang === 'tr';
   return (
     <div className="dv-cbar">
       <div className="dv-cbar__head">
         <span className="dv-cbar__label">{label}</span>
         <span className="dv-cbar__value cy-mono">
+          {pctFirst && <span className="dv-readout__unit">%</span>}
           {text}
-          {unit && <span className="dv-readout__unit">{unit}</span>}
+          {unit && !pctFirst && <span className="dv-readout__unit">{unit}</span>}
         </span>
       </div>
       <div className="dv-cbar__track">

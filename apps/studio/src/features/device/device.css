@@ -1317,3 +1317,13 @@ button.dv-head__uid:hover {
     display: none;
   }
 }
+
+/* moving action: warning, help, hold-to-arm */
+.dv-move {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dv-move .dv-control__arm {
+  margin: 0;
+}

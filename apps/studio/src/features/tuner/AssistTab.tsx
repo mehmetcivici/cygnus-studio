@@ -6,6 +6,8 @@ import { Button, SegmentedControl, Select, StaticChart, Tooltip, cx, type Static
 import { useTuner } from './controller';
 import { setUi, useTunerUi } from './state';
 import { Field } from './TestTab';
+import { ffProgram } from './engine';
+import { ROLE_SYMBOL } from './loop';
 import {
   availableOutput,
   ffSuggestion,
@@ -23,7 +25,6 @@ import type { Aggressiveness } from './analysis/tuning';
 import type { Gains, TunerRun } from './types';
 import { tTuner } from './messages';
 
-const ROLE_SYMBOL: Record<GainRole, string> = { kp: 'Kp', ki: 'Ki', kd: 'Kd', kS: 'kS', kV: 'kV', kA: 'kA', iMax: 'Imax', outMax: 'Omax' };
 
 export function AssistTab() {
   const api = useTuner();
@@ -34,6 +35,7 @@ export function AssistTab() {
         <Sparkles size={13} aria-hidden />
         <span>{tTuner('assist.never')}</span>
       </p>
+      <p className="tuner-muted">{tTuner(hasFf ? 'assist.orderFf' : 'assist.order')}</p>
       {hasFf && <FeedforwardSection />}
       <IdentSection index={hasFf ? 2 : 1} />
       {api.ctx.openMode && <RelaySection index={hasFf ? 3 : 2} />}
@@ -89,14 +91,21 @@ function Kv({ items }: { items: Array<[string, string]> }) {
 }
 
 function FeedforwardSection() {
-  const { fmtNumber } = useI18n();
+  const { fmtNumber, fmtValue } = useI18n();
   const api = useTuner();
+  const lim = api.config.limits;
   const run = latestOf(api.runs, (r) => r.kind === 'ff' && !!r.analysis.ff);
   const ff = run?.analysis.ff;
   const sug = useMemo(() => (ff ? ffSuggestion(api.ctx, ff) : null), [ff, api.ctx]);
   return (
     <Section index={1} title={tTuner('ff.title')} action={<RunButton onRun={() => void api.runFeedforward()} label={tTuner('ff.runHint')} />}>
-      <p className="tuner-muted">{tTuner('ff.body')}</p>
+      <p className="tuner-hint tuner-hint--warn">
+        {tTuner('ff.what', { s: fmtNumber(ffProgram({ maxOpen: lim.maxOpen, maxSpeed: lim.maxAmplitude, measured: 0 }).maxDuration, 0), speed: fmtValue(0.8 * lim.maxAmplitude, api.ctx.unit, 0), duty: fmtNumber(lim.maxOpen, 2) })}
+      </p>
+      <details className="tuner-details">
+        <summary>{tTuner('assist.how')}</summary>
+        <p className="tuner-muted">{tTuner('ff.body')}</p>
+      </details>
       {ff && (
         <Kv
           items={[
@@ -228,12 +237,15 @@ function RelaySection({ index }: { index: number }) {
       title={tTuner('relay.title')}
       action={<RunButton onRun={() => !centreBlock && void api.runRelay(o)} label={tTuner('relay.runHint')} />}
     >
-      <p className="tuner-muted">{tTuner('relay.body')}</p>
+      <details className="tuner-details">
+        <summary>{tTuner('assist.how')}</summary>
+        <p className="tuner-muted">{tTuner('relay.body')}</p>
+      </details>
       <div className="tuner-fields">
         <Field label={tTuner('relay.centre')} value={o.centre} unit={ctx.unit} digits={ctx.digits} step={10 ** -ctx.digits} onCommit={(v) => setO({ ...o, centre: v })} />
-        <Field label={tTuner('relay.amplitude')} value={o.amplitude} digits={3} min={0.01} max={config.limits.maxOpen} step={0.01} onCommit={(v) => setO({ ...o, amplitude: v })} hint={tTuner('relay.amplitudeHint')} />
+        <Field label={tTuner('relay.amplitude')} unit={tTuner('unit.duty')} value={o.amplitude} digits={3} min={0.01} max={config.limits.maxOpen} step={0.01} onCommit={(v) => setO({ ...o, amplitude: v })} hint={tTuner('relay.amplitudeHint')} />
         <Field label={tTuner('relay.hysteresis')} value={o.hysteresis} unit={ctx.unit} digits={ctx.digits + 2} min={0} step={10 ** -(ctx.digits + 1)} onCommit={(v) => setO({ ...o, hysteresis: v })} />
-        <Field label={tTuner('relay.cycles')} value={o.cycles} digits={0} min={3} max={20} step={1} onCommit={(v) => setO({ ...o, cycles: Math.round(v) })} />
+        <Field label={tTuner('relay.cycles')} unit={tTuner('unit.periods')} value={o.cycles} digits={0} min={3} max={20} step={1} onCommit={(v) => setO({ ...o, cycles: Math.round(v) })} />
       </div>
       {centreBlock && <p className="tuner-hint tuner-hint--danger">{tTuner('block.range')}</p>}
       {rr && (

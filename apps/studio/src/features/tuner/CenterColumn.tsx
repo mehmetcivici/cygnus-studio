@@ -3,11 +3,11 @@ import { Activity, ChartLine, GitCompareArrows, OctagonAlert, Square, Star, Unpl
 import { useI18n } from '../../i18n';
 import { Button, EmptyState, LiveChart, ProgressBar, SegmentedControl, StaticChart, chartColor, cx, resolveColor, useTheme, type LiveSeries, type StaticSeries } from '../../ui';
 import { FaultList, useDrive } from '../../core';
+import { svgLineChart } from './svg';
 import { useTuner } from './controller';
 import { setUi, useTunerUi, type CenterView } from './state';
 import { headline } from './runs';
-import { stepScore, type StepMetrics } from './analysis/step';
-import { svgLineChart } from './svg';
+import { TIME_METRICS, reachedTarget, stepScore, type MetricKey, type StepMetrics } from './analysis/step';
 import type { TunerRun } from './types';
 import { tTuner } from './messages';
 
@@ -250,7 +250,9 @@ function CompareView() {
       </button>
     </th>
   );
-  const cell = (m: StepMetrics | null, k: keyof StepMetrics, unit: string, d: number) => <td className="cy-mono">{m ? fmtValue(m[k] as number, unit, d) : '—'}</td>;
+  const cell = (m: StepMetrics | null, k: keyof StepMetrics, unit: string, d: number) => (
+    <td className="cy-mono">{m && (reachedTarget(m) || !TIME_METRICS.includes(k as MetricKey)) ? fmtValue(m[k] as number, unit, d) : '—'}</td>
+  );
   const pidRoles = api.ctx.roles.filter((role) => role === 'kp' || role === 'ki' || role === 'kd');
   const g = (r: TunerRun) => pidRoles.map((role) => compact(r.gains[role], fmtNumber)).join(' / ');
   return (

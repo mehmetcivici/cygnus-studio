@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { CircleHelp, History, Lightbulb } from 'lucide-react';
+import { ArrowRight, CircleHelp, History, Lightbulb, TriangleAlert } from 'lucide-react';
+import { paramByKey } from '@cygnus/protocol';
 import { useI18n } from '../../i18n';
 import { Button, EmptyState, SegmentedControl, Tooltip, cx } from '../../ui';
 import { useTuner } from './controller';
-import { useTunerUi } from './state';
-import { gradeStep, type Grade, type MetricKey, type StepMetrics } from './analysis/step';
+import { setUi, useTunerUi } from './state';
+import { TIME_METRICS, gradeStep, type Grade, type MetricKey, type StepMetrics, type TipKey } from './analysis/step';
 import { updateRun } from './project';
 import type { TunerRun } from './types';
 import { runLabelKey } from './runs';
+import { ROLE_SYMBOL } from './loop';
 import { tTuner } from './messages';
 
 const ORDER: MetricKey[] = ['riseTime', 'peakTime', 'overshoot', 'settlingTime', 'steadyError', 'iae', 'itae', 'damping', 'saturation', 'noiseRms'];
@@ -20,7 +22,7 @@ export function useFocusRun(): TunerRun | undefined {
 }
 
 export function MetricsTab() {
-  const { fmtValue, fmtNumber, lang } = useI18n();
+  const { fmtValue, fmtNumber, fmtPercent, lang, tl } = useI18n();
   const api = useTuner();
   const run = useFocusRun();
   const [stepIdx, setStepIdx] = useState(0);
@@ -34,9 +36,18 @@ export function MetricsTab() {
   const digits = api.ctx.digits;
   // A residual inside the loop's own "allowed error" parameter is by design, not a tuning fault.
   const tolKey = (api.ctx.loop.extraParams ?? []).find((k) => /tolerance/.test(k));
+  const tolDef = tolKey ? paramByKey(api.ctx.def, tolKey) : undefined;
   const tips = graded?.tips ?? [];
+  const reached = graded?.reached ?? true;
+  // Three significant digits: "3.844,0376" says nothing more than "3.840".
+  const sig3 = (v: number): string => {
+    if (!Number.isFinite(v) || v === 0) return fmtNumber(v, 0);
+    const d = Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(Math.abs(v)))));
+    return fmtNumber(Number(v.toPrecision(3)), d);
+  };
   const show = (k: MetricKey): string => {
     if (!m) return '—';
+    if (!reached && TIME_METRICS.includes(k)) return '—';
     switch (k) {
       case 'riseTime':
       case 'peakTime':
@@ -49,9 +60,9 @@ export function MetricsTab() {
       case 'steadyError':
         return `${fmtValue(m.steadyError, unit, digits + 1)} · ${fmtValue(m.steadyErrorPct, '%', 1)}`;
       case 'iae':
-        return fmtNumber(m.iae, 4);
+        return `${sig3(m.iae)} ${unit}·s`;
       case 'itae':
-        return fmtNumber(m.itae, 4);
+        return `${sig3(m.itae)} ${unit}·s²`;
       case 'damping':
         return Number.isFinite(m.damping) ? fmtNumber(m.damping, 2) : '—';
       case 'noiseRms':
@@ -78,13 +89,19 @@ export function MetricsTab() {
             options={steps.slice(0, 6).map((s, i) => ({ value: i, label: `${i + 1}: ${fmtNumber(s.from, digits)}→${fmtNumber(s.to, digits)}` }))}
           />
         )}
+        {m && !reached && (
+          <div className="tuner-hint tuner-hint--danger tuner-notreached" role="status">
+            <TriangleAlert size={14} aria-hidden />
+            <span>{tTuner('metrics.notReached', { pct: fmtPercent(Math.min(100, 100 - m.steadyErrorPct), 0) })}</span>
+          </div>
+        )}
         {m ? (
           <ul className="tuner-metrics">
             {ORDER.map((k) => {
               const g: Grade = graded?.grades.find((x) => x.key === k)?.grade ?? 'info';
               return (
                 <li key={k} className={cx('tuner-metric', `is-${g}`)}>
-                  <span className="tuner-metric__dot" aria-label={tTuner(`grade.${g}`)} />
+                  <span className="tuner-metric__dot" aria-hidden />
                   <span className="tuner-metric__label">
                     {tTuner(`m.${k}`)}
                     <Tooltip content={tTuner(`mh.${k}`)}>
@@ -92,6 +109,7 @@ export function MetricsTab() {
                     </Tooltip>
                   </span>
                   <span className="tuner-metric__value cy-mono">{show(k)}</span>
+                  <span className="tuner-metric__grade">{g === 'info' ? '' : tTuner(`grade.${g}`)}</span>
                 </li>
               );
             })}
@@ -110,7 +128,8 @@ export function MetricsTab() {
           <ul>
             {tips.map((tip) => (
               <li key={tip} className={cx(tip === 'good' && 'is-good')}>
-                {tip === 'steadyError' && tolKey ? tTuner('tip.steadyErrorTol', { param: tolKey }) : tTuner(`tip.${tip}`)}
+                {tip === 'steadyError' && tolDef ? tTuner('tip.steadyErrorTol', { param: tl(tolDef.label) }) : tTuner(`tip.${tip}`)}
+                <TipAction tip={tip} run={run} />
               </li>
             ))}
           </ul>
@@ -126,7 +145,7 @@ export function MetricsTab() {
         <div className="tuner-kv cy-mono">
           {api.ctx.roles.map((r) => (
             <span key={r}>
-              {r} = {fmtNumber(run.gains[r] ?? NaN, 6, { grouping: false })}
+              {ROLE_SYMBOL[r]} = {fmtNumber(run.gains[r] ?? NaN, 6, { grouping: false })}
             </span>
           ))}
         </div>
@@ -136,5 +155,18 @@ export function MetricsTab() {
         </label>
       </section>
     </div>
+  );
+}
+
+/** One concrete next step for a tip, where the screen has one. */
+function TipAction({ tip, run }: { tip: TipKey; run: TunerRun }) {
+  const api = useTuner();
+  const ffMissing = api.ctx.roles.includes('kV') && !((run.gains.kV ?? 0) > 0) && !api.integrating && api.ctx.openMode !== null;
+  const wantsFf = (tip === 'steadyError' || tip === 'steadyErrorFf' || tip === 'notReached' || tip === 'slow') && ffMissing;
+  if (!wantsFf) return null;
+  return (
+    <Button size="sm" variant="ghost" iconRight={ArrowRight} className="tuner-tip__action" onClick={() => setUi({ rightTab: 'assist' })}>
+      {tTuner('tip.actFf')}
+    </Button>
   );
 }

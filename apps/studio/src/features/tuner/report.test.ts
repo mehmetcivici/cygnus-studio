@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildReport } from './report';
 import { defaultSignal } from './signals';
 import { detectSteps, stepMetrics } from './analysis/step';
-import type { TunerRun } from './types';
+import { EMPTY_SECTION, isTunerSection, type TunerRun } from './types';
 
 function run(n: number, tau: number, note = ''): TunerRun {
   const t = Array.from({ length: 2000 }, (_, i) => i * 0.001);
@@ -48,5 +48,27 @@ describe('report', () => {
     expect(tr).toContain('&lt;b&gt;not&lt;/b&gt;');
     expect(tr).toContain('a &lt; b');
     expect(tr).not.toContain('<script');
+  });
+
+  // Regression (review uygulama #5): a hostile project file put markup into `gainSet` and it
+  // ran in a same-origin window. Every file-sourced value is escaped and the section is checked.
+  it('escapes file-sourced values and forbids scripts', () => {
+    const EVIL = '<img src=x onerror=alert(1)>';
+    const bad = { ...run(1, 0.1, EVIL), gainSet: EVIL, unit: EVIL, outputUnit: EVIL, n: EVIL, deviceName: EVIL } as unknown as TunerRun;
+    const html = buildReport({ title: EVIL, deviceName: EVIL, modelName: EVIL, loopName: EVIL, unit: EVIL, roles: ['kp'], notes: EVIL, projectName: EVIL, lang: 'tr', runs: [bad] });
+    expect(html).not.toContain('<img');
+    expect(html).not.toMatch(/<[^>]*onerror/i);
+    expect(html).not.toContain('onclick');
+    expect(html).toContain('http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;');
+  });
+
+  it('project section: rejects runs whose labels, units or gain sets are not plain', () => {
+    const ok = { ...EMPTY_SECTION, runs: [run(1, 0.1)] };
+    expect(isTunerSection(ok)).toBe(true);
+    for (const patch of [{ gainSet: '<img src=x>' }, { gainSet: 'C' }, { unit: '<b>' }, { kind: 'evil' }, { n: '1' }, { gains: { kp: '1' } }, { gains: { evil: 1 } }]) {
+      expect(isTunerSection({ ...ok, runs: [{ ...run(1, 0.1), ...patch }] })).toBe(false);
+    }
+    expect(isTunerSection({ ...ok, sets: { a: { A: { kp: 1 }, B: null, active: 'X' } } })).toBe(false);
+    expect(isTunerSection({ ...ok, configs: { a: { signal: { kind: 'step' }, limits: {} } } })).toBe(false);
   });
 });

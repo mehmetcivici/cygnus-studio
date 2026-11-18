@@ -2,7 +2,7 @@ import { defineProjectSection } from '../../core';
 import { EMPTY_SECTION, isTunerSection, loopId, type GainSetId, type Gains, type LoopConfig, type TunerRun, type TunerSection } from './types';
 
 /** Runs, A/B gain sets, per-loop test settings and notes live in the project file. */
-export const tunerSection = defineProjectSection<TunerSection>('tuner', { initial: EMPTY_SECTION, guard: isTunerSection });
+export const tunerSection = defineProjectSection<TunerSection>('tuner', { initial: EMPTY_SECTION, validate: isTunerSection, version: 1 });
 
 /** Oldest runs beyond this are dropped (each run keeps ≤ RUN_POINTS samples). */
 export const MAX_RUNS = 60;

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Download, FileText, NotebookPen, Printer } from 'lucide-react';
+import { Download, ExternalLink, FileText, NotebookPen, Printer } from 'lucide-react';
 import { useI18n, type Lang } from '../../i18n';
-import { Button, Checkbox, Modal, SegmentedControl, toast } from '../../ui';
-import { displayName, downloadFile, modelText, safeFileName, useProject } from '../../core';
+import { Button, Checkbox, Modal, SegmentedControl } from '../../ui';
+import { displayName, downloadFile, modelText, openReportWindow, printReport, safeFileName, useProject } from '../../core';
 import { useTuner } from './controller';
 import { useTunerUi } from './state';
 import { tunerSection, setNotes } from './project';
@@ -60,17 +60,12 @@ function ReportDialog({ onClose }: { onClose: () => void }) {
       projectName,
     });
   const file = safeFileName(`${displayName(api.view, rl)}-${api.ctx.loop.key}-report`);
+  // Run data comes from shared project files: the report opens without `window.opener`, as a
+  // Blob URL under a no-script CSP (core `openReportWindow`), or prints from a sandboxed frame.
   const open = (): void => {
-    const w = window.open('', '_blank');
-    if (!w) {
-      toast.warn(tTuner('report.popup'));
-      downloadFile(`${file}.html`, make(), 'text/html');
-      return;
-    }
-    w.document.open();
-    w.document.write(make());
-    w.document.close();
+    if (!openReportWindow(make())) downloadFile(`${file}.html`, make(), 'text/html');
   };
+  const print = (): void => void printReport(make());
   return (
     <Modal
       open
@@ -82,8 +77,11 @@ function ReportDialog({ onClose }: { onClose: () => void }) {
           <Button icon={Download} disabled={!runs.length} onClick={() => downloadFile(`${file}.html`, make(), 'text/html')}>
             {tTuner('report.download')}
           </Button>
-          <Button variant="primary" icon={Printer} disabled={!runs.length} onClick={open}>
+          <Button icon={ExternalLink} disabled={!runs.length} onClick={open}>
             {tTuner('report.open')}
+          </Button>
+          <Button variant="primary" icon={Printer} disabled={!runs.length} onClick={print}>
+            {tTuner('report.print')}
           </Button>
         </>
       }

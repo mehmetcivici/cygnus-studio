@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { DeviceState, paramByKey, type GainRole } from '@cygnus/protocol';
+import { DeviceState, paramByKey, type ControlStopReason, type GainRole } from '@cygnus/protocol';
 import {
   describeError,
   displayName,
@@ -120,9 +120,18 @@ function problemOf(v: DeviceView): DeviceProblem {
   return null;
 }
 
-function defaultConfig(ctx: LoopContext, centre: number): LoopConfig {
+/**
+ * First step for a self-regulating loop: a tenth of the test limit (a beginner who arms and
+ * presses Enter must not throw a 50 A step at a gravity-loaded arm). The test tab shows it.
+ */
+export const FIRST_STEP_FRACTION = 0.1;
+export function firstStepSize(maxAmplitude: number): number {
+  return roundNice(maxAmplitude * FIRST_STEP_FRACTION);
+}
+
+export function defaultConfig(ctx: LoopContext, centre: number): LoopConfig {
   const limits = defaultLimits(ctx, ctx.integrating ? centre : 0);
-  const span = ctx.integrating ? roundNice((limits.rangeMax - limits.rangeMin) * 0.3) : roundNice(limits.maxAmplitude * 0.4);
+  const span = ctx.integrating ? roundNice((limits.rangeMax - limits.rangeMin) * 0.3) : firstStepSize(limits.maxAmplitude);
   const from = ctx.integrating ? Number(centre.toFixed(ctx.digits)) : 0;
   // Self-regulating loops settle on the process time constant: give them a longer hold.
   const signal = { ...defaultSignal('step', span, from), hold: ctx.integrating ? 2 : 3, pre: ctx.integrating ? 1 : 0.5 };
@@ -131,6 +140,29 @@ function defaultConfig(ctx: LoopContext, centre: number): LoopConfig {
     signal.amplitude = span / 4;
   }
   return { signal, limits };
+}
+
+/** Plain-language group of the host's stop reason. */
+export function haltGroup(reason: ControlStopReason | null): 'estop' | 'restart' | 'fault' | 'number' | 'lost' | 'other' {
+  switch (reason) {
+    case 'estop':
+    case 'boardEstop':
+      return 'estop';
+    case 'boardReset':
+    case 'bootloader':
+      return 'restart';
+    case 'boardFault':
+    case 'disabled':
+      return 'fault';
+    case 'renumbered':
+    case 'unresolved':
+      return 'number';
+    case 'lost':
+    case 'disconnected':
+      return 'lost';
+    default:
+      return 'other';
+  }
 }
 
 /** Builds the screen's API for one board + loop. */
@@ -177,6 +209,15 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
   const driverRef = useRef(driver);
   driverRef.current = driver;
   useEffect(() => session?.onStop(() => driverRef.current?.release()), [session]);
+  // The host ended the control session on its own (BOOT, E-STOP, fault, renumbering): never
+  // keep the screen armed over a loop that no longer runs.
+  useEffect(() => {
+    if (!driver) return;
+    return driver.onHalt((reason) => {
+      toast.warn(tTuner('abort.board'), { id: 'tuner-abort', description: tTuner(`halt.${haltGroup(reason)}`) });
+      if (session?.armed) session.disarm('deviceFault');
+    });
+  }, [driver, session]);
 
   // ---- persisted per-loop settings -----------------------------------------------------------
   const section = tunerSection.use();
@@ -291,7 +332,7 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
         return run;
       } catch (e) {
         if (e instanceof TestAborted) {
-          if (e.reason !== 'stopped') toast.warn(tTuner(`abort.${e.reason}`), { id: 'tuner-abort' });
+          if (e.reason !== 'stopped' && e.reason !== 'board') toast.warn(tTuner(`abort.${e.reason}`), { id: 'tuner-abort' });
         } else toast.error(describeError(e, lang));
         return null;
       } finally {
@@ -376,15 +417,19 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
     [ctx.idx, config.limits.maxOpen, runTest, integrating],
   );
 
-  const stopTest = useCallback(() => driverRef.current?.abort('stopped'), []);
+  // "Stop" means everything off: the test ends, the board gets its neutral command and the
+  // screen disarms (review: the button used to leave the last open-loop duty running).
+  const stopTest = useCallback(() => {
+    driverRef.current?.abort('stopped');
+    session?.disarm('released');
+  }, [session]);
 
-  // Armed: hold a safe target (velocity/current: 0, position: where it is now).
+  // Armed: always start from the safe target (velocity/current: 0, position: where it is now),
+  // never from what was held before the last stop.
   useEffect(() => {
     if (!armed || !driver) return;
-    const m = driver.value(ctx.idx.measured);
-    const hold = integrating ? (Number.isFinite(m) ? m : 0) : 0;
     try {
-      driver.hold(Number(hold.toFixed(6)));
+      driver.hold(driver.safeTarget());
     } catch (e) {
       toast.error(describeError(e, lang));
       session?.disarm();
@@ -397,7 +442,11 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
       const d = driverRef.current;
       if (!d || !session?.armed || d.testing) return;
       if (targetBlock(ctxEff, config.limits, v)) return;
-      d.hold(v);
+      try {
+        d.hold(v);
+      } catch {
+        // The loop was ended by the board; onHalt disarms the screen.
+      }
     },
     [session, ctxEff, config.limits],
   );
@@ -405,8 +454,14 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
   // Every stop path aborts a running test; also stop when the drive is cut elsewhere.
   const latched = useDrive((s) => s.estopLatched);
   useEffect(() => {
-    if (latched) driverRef.current?.abort('stopped');
+    if (latched) driverRef.current?.release();
   }, [latched]);
+  // A board that reports E-STOP, a fault or goes offline ends the running test at once, even
+  // before the core's session cut arrives.
+  const problem = problemOf(view);
+  useEffect(() => {
+    if (problem) driverRef.current?.abort('board');
+  }, [problem]);
 
   const undo = useCallback(async () => {
     const g = popHistory(id);
@@ -436,7 +491,7 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
     session,
     armed,
     busyOwner,
-    problem: problemOf(view),
+    problem,
     gains,
     gainsLoaded,
     sets,

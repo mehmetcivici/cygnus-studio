@@ -1,4 +1,4 @@
-import type { ControlLoop, DeviceHandle, StreamSubscription } from '@cygnus/protocol';
+import type { ControlLoop, ControlStopReason, DeviceHandle, StreamSubscription } from '@cygnus/protocol';
 import { SeriesBuffer } from '../../ui';
 import { signalDuration, signalValue, type SignalConfig } from './signals';
 import { targetBlock, type LoopContext, type TestLimits } from './loop';
@@ -38,7 +38,11 @@ export interface Capture {
   periodUs: number;
 }
 
-export type AbortReason = 'stopped' | 'limit' | 'range' | 'stream' | 'rejected';
+/**
+ * `stopped`: the user or the drive session ended it. `board`: the board/host ended the control
+ * session (BOOT, E-STOP, fault, renumbering). `error`: the program itself threw.
+ */
+export type AbortReason = 'stopped' | 'limit' | 'range' | 'stream' | 'rejected' | 'board' | 'error';
 
 export class TestAborted extends Error {
   constructor(readonly reason: AbortReason) {
@@ -91,6 +95,8 @@ export class TunerDriver {
   private origin = NaN;
   private listeners = new Set<() => void>();
   private limits: TestLimits | null = null;
+  private offStopped: (() => void) | null = null;
+  private haltListeners = new Set<(reason: ControlStopReason | null) => void>();
   holdTarget = 0;
 
   constructor(
@@ -142,6 +148,16 @@ export class TunerDriver {
     for (const cb of this.listeners) cb();
   }
 
+  /**
+   * Notified when the board side ended the control session on its own (the host stopped the
+   * loop: BOOT, E-STOP, fault, renumbering). The screen must disarm: the driver never restarts
+   * a loop it did not stop itself.
+   */
+  onHalt(cb: (reason: ControlStopReason | null) => void): () => void {
+    this.haltListeners.add(cb);
+    return () => this.haltListeners.delete(cb);
+  }
+
   open(): void {
     if (this.sub) return;
     this.sub = this.device.stream.open({ signals: this.ctx.streamKeys, periodUs: this.ctx.periodUs });
@@ -149,7 +165,9 @@ export class TunerDriver {
   }
 
   close(): void {
-    this.abort('stopped');
+    this.endTest('stopped');
+    // A driver that goes away (board/loop switch, unmount) never leaves its loop running.
+    this.dropLoop(true);
     this.offData?.();
     this.offData = null;
     this.sub?.close();
@@ -164,7 +182,13 @@ export class TunerDriver {
     this.latestT = t;
     for (let i = 0; i < v.length; i++) this.live[i]?.push(t, v[i]!);
     const a = this.test;
-    if (a) this.feed(a, t, v);
+    if (!a) return;
+    try {
+      this.feed(a, t, v);
+    } catch (e) {
+      // A throwing program must not leave the last command running.
+      this.abort(e instanceof TestAborted ? e.reason : 'error');
+    }
   }
 
   // ---- driving -------------------------------------------------------------------------------
@@ -176,20 +200,46 @@ export class TunerDriver {
     this.command({ mode: 'closed', value: target });
   }
 
-  /** Called on every drive stop: the core already sent the neutral command. */
+  /**
+   * The target that moves nothing: zero for a self-regulating loop (speed, current), the
+   * present position for an integrating one.
+   */
+  safeTarget(): number {
+    if (!this.ctx.integrating) return 0;
+    const m = this.value(this.ctx.idx.measured);
+    return Number.isFinite(m) ? Number(m.toFixed(6)) : this.holdTarget;
+  }
+
+  /** Called on every drive stop: the core sends the neutral command right after. */
   release(): void {
-    this.abort('stopped');
+    this.endTest('stopped');
+    this.dropLoop(false);
+  }
+
+  private dropLoop(stop: boolean): void {
+    const loop = this.loop;
+    // Detach first: our own stop must not come back as a board stop.
+    this.offStopped?.();
+    this.offStopped = null;
     this.loop = null;
     this.loopMode = null;
-    this.emit();
+    if (stop && loop?.active) loop.stop();
+    if (loop) this.emit();
   }
 
   private command(c: Command): void {
     const key = c.mode === 'closed' ? this.ctx.modeKey : this.ctx.openMode?.key;
     if (!key) throw new TestAborted('rejected');
-    if (!this.loop || !this.loop.active) {
+    if (this.loop && !this.loop.active) {
+      // Somebody else (host: BOOT/E-STOP/fault, core) ended the session. Restarting it here
+      // would drive a board the user did not re-arm.
+      this.boardStopped();
+      throw new TestAborted('board');
+    }
+    if (!this.loop) {
       this.loop = this.device.control.start(key, c.value, { rateHz: CONTROL_RATE_HZ });
       this.loopMode = c.mode;
+      this.watchLoop(this.loop);
       this.emit();
       return;
     }
@@ -197,6 +247,20 @@ export class TunerDriver {
       this.loop.setMode(key, c.value);
       this.loopMode = c.mode;
     } else this.loop.update(c.value);
+  }
+
+  /** The host tells why it ended a session (BOOT, E-STOP, fault, renumbering, link loss …). */
+  private watchLoop(loop: ControlLoop): void {
+    this.offStopped = loop.onStopped((reason) => {
+      if (this.loop === loop) this.boardStopped(reason);
+    });
+  }
+
+  private boardStopped(reason: ControlStopReason | null = this.loop?.stopReason ?? null): void {
+    if (!this.loop) return;
+    this.dropLoop(false);
+    this.endTest('board');
+    for (const cb of this.haltListeners) cb(reason);
   }
 
   // ---- tests -----------------------------------------------------------------------------------
@@ -237,6 +301,9 @@ export class TunerDriver {
 
 
   private feed(a: ActiveTest, tAbs: number, v: Float32Array): void {
+    // The host may end the session without telling us (older host, board reset): check on
+    // every sample, never keep a test "running" over a dead loop.
+    if (this.loop && !this.loop.active) return this.boardStopped();
     a.lastSampleAt = this.env.now();
     if (Number.isNaN(a.t0)) a.t0 = tAbs;
     const t = tAbs - a.t0;
@@ -286,37 +353,56 @@ export class TunerDriver {
     this.env.clearTimeout(a.watchdog);
     this.test = null;
     a.cap.lost = this.lost - a.lost0;
-    const after = a.program.after(v);
+    let after: Command | null = null;
     try {
+      after = a.program.after(v);
+      if (after && this.limits && after.mode === 'closed' && targetBlock(this.ctx, this.limits, after.value)) after = null;
+      if (after && after.mode !== 'closed') after = null;
       if (after) {
-        if (after.mode === 'closed') this.holdTarget = after.value;
+        this.holdTarget = after.value;
         this.command(after);
-      } else this.loop?.stop();
+      }
     } catch {
-      this.loop?.stop();
+      after = null;
     }
-    if (!after) {
-      this.loop = null;
-      this.loopMode = null;
-    }
+    // No safe closed-loop hold: end the session (neutral) rather than keep the last command.
+    if (!after) this.dropLoop(true);
     a.resolve(a.cap);
     this.emit();
   }
 
-  /** Aborts the running test (no-op when idle). Drive state is left to the caller/core. */
+  /**
+   * Aborts the running test (no-op when idle) and leaves the board safe: an open-loop command
+   * never survives an abort. A user stop or a limit hit returns to the safe closed-loop target
+   * (speed 0 / present position); a range, stream, board or program error ends the control
+   * session (neutral) because the measurement or the loop can no longer be trusted.
+   */
   abort(reason: AbortReason): void {
+    if (!this.test) return;
+    const loop = this.loop;
+    if (loop?.active) {
+      if (reason === 'stopped' || reason === 'limit') {
+        const safe = this.safeTarget();
+        this.holdTarget = safe;
+        try {
+          if (this.loopMode === 'open') {
+            loop.setMode(this.ctx.modeKey, safe);
+            this.loopMode = 'closed';
+          } else loop.update(safe);
+        } catch {
+          this.dropLoop(true);
+        }
+      } else this.dropLoop(true);
+    }
+    this.endTest(reason);
+  }
+
+  /** Settles the test promise without commanding anything. */
+  private endTest(reason: AbortReason): void {
     const a = this.test;
     if (!a) return;
     this.env.clearTimeout(a.watchdog);
     this.test = null;
-    // Never leave an open-loop command running after an abort.
-    if (reason !== 'stopped' && this.loop?.active) {
-      if (this.loopMode === 'open') {
-        this.loop.stop();
-        this.loop = null;
-        this.loopMode = null;
-      } else this.loop.update(this.holdTarget);
-    }
     a.reject(new TestAborted(reason));
     this.emit();
   }

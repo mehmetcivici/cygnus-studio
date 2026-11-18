@@ -1,9 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Copy, Download, Factory, History, Power, Save, TriangleAlert, Upload } from 'lucide-react';
 import { paramByKey } from '@cygnus/protocol';
 import { useI18n } from '../../../i18n';
-import { Badge, Button, Checkbox, ConfirmDialog, toast } from '../../../ui';
-import { ParamForm, describeError, downloadFile, fmtFw, paramCache, pickFile, safeFileName, displayName, type DeviceView } from '../../../core';
+import { Badge, Button, Checkbox, ConfirmDialog, Tooltip, toast } from '../../../ui';
+import { ParamForm, matchDevice, useDevices, describeError, downloadFile, fmtFw, paramCache, pickFile, safeFileName, displayName, type DeviceView } from '../../../core';
 import { buildParamFile, parseParamFile, serializeParamFile, PARAM_FILE_EXT, type ParamFile } from '../logic/paramFile';
 import { readValues, rebootDevice, saveDevice } from '../ops';
 import { tDevice } from '../messages';
@@ -23,6 +23,12 @@ export function SettingsTab({ device }: { device: DeviceView }) {
   const [factoryBusy, setFactoryBusy] = useState(false);
   const [revertOpen, setRevertOpen] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
+  const devices = useDevices();
+  // Copying needs another board of the same model; without one the button explains why.
+  const copyTargets = useMemo(
+    () => devices.filter((d) => d.uid48 !== device.uid48 && matchDevice(d, { capability: 'params', models: device.def ? [device.def.key] : [], includeOffline: true })).length,
+    [devices, device.uid48, device.def],
+  );
   const [imported, setImported] = useState<ParamFile | null>(null);
   const [exporting, setExporting] = useState(false);
   /** Keys written in this visit that only take effect after a reboot. */
@@ -124,9 +130,13 @@ export function SettingsTab({ device }: { device: DeviceView }) {
           <Button size="sm" variant="ghost" icon={Upload} disabled={!online} onClick={() => void importFile()}>
             {tDevice('settings.import')}
           </Button>
-          <Button size="sm" variant="secondary" icon={Copy} disabled={!online} onClick={() => setCopyOpen(true)}>
-            {tDevice('settings.copy')}
-          </Button>
+          <Tooltip content={copyTargets === 0 ? tDevice('copy.noTargets') : tDevice('settings.copy')}>
+            <span>
+              <Button size="sm" variant="secondary" icon={Copy} disabled={!online || copyTargets === 0} onClick={() => setCopyOpen(true)}>
+                {tDevice('settings.copy')}
+              </Button>
+            </span>
+          </Tooltip>
         </div>
       </div>
 

@@ -196,3 +196,14 @@ describe('manual drive helpers', () => {
     expect(f.every((x) => x.line === 2 && x.text.length <= 6)).toBe(true);
   });
 });
+
+// Regression (review tasarim B2): actions that spin the motor ran behind a confirm dialog only.
+describe('movesActuator', () => {
+  it('marks the catalog actions that drive the mechanism, and only those', async () => {
+    const { CATALOG } = await import('@cygnus/protocol');
+    const { movesActuator } = await import('./actions');
+    const moving = CATALOG.flatMap((m) => m.actions.filter(movesActuator).map((a) => `${m.key}.${a.key}`));
+    expect(moving).toEqual(expect.arrayContaining(['esc80a.detect_direction', 'esc80a.measure_motor', 'esc20a.detect_direction', 'servo16.center_all']));
+    expect(moving.some((k) => /zero_here|set_yaw|calibrate_pwm|disable_all|reset_/.test(k))).toBe(false);
+  });
+});

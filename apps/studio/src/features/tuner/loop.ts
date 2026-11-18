@@ -9,8 +9,9 @@ export interface LoopContext {
   modeMin: number;
   modeMax: number;
   /**
-   * Open-loop mode of the same control frame (catalog key `duty`), used by the feed-forward,
-   * identification and relay experiments. Its `measured` signal reports the applied ratio.
+   * Open-loop mode of the same control frame (catalog `TunerLoopDef.openMode`), used by the
+   * feed-forward, identification and relay experiments. Its `measured` signal reports the
+   * applied ratio. Null: the loop offers no open-loop experiment.
    */
   openMode: { key: string; min: number; max: number; measured: string | undefined } | null;
   /** Stream channel keys, in stream order (duplicates removed). */
@@ -25,11 +26,7 @@ export interface LoopContext {
   unit: string;
   outputUnit: string;
   currentUnit: string;
-  /**
-   * Integrating process (the measurement integrates the loop output). The catalog has no
-   * explicit flag; its loop key convention is used: `position` loops integrate. The screen lets
-   * the user override it.
-   */
+  /** Integrating process (catalog `TunerLoopDef.integrating`); the screen lets the user override it. */
   integrating: boolean;
   /** Gains present in the catalog for this loop, in display order. */
   roles: GainRole[];
@@ -41,6 +38,9 @@ export interface LoopContext {
 }
 
 export const ROLE_ORDER: readonly GainRole[] = ['kp', 'ki', 'kd', 'kS', 'kV', 'kA', 'iMax', 'outMax'];
+
+/** Symbol shown for a gain everywhere (panels, run summary, report). */
+export const ROLE_SYMBOL: Record<GainRole, string> = { kp: 'Kp', ki: 'Ki', kd: 'Kd', kS: 'kS', kV: 'kV', kA: 'kA', iMax: 'Imax', outMax: 'Omax' };
 
 /** Loops whose loop output feeds another loop's target (cascade), by unit match. */
 export function cascadeOf(def: ModelDef): Array<{ outer: string; inner: string }> {
@@ -55,7 +55,7 @@ export function cascadeOf(def: ModelDef): Array<{ outer: string; inner: string }
 export function loopContext(def: ModelDef, loop: TunerLoopDef): LoopContext {
   const frame = def.controls.find((c) => c.index === loop.ctrlFrame && c.format === 'set') ?? def.controls.find((c) => c.format === 'set');
   const mode = frame?.modes?.find((m) => m.value === loop.mode);
-  const open = frame?.modes?.find((m) => m.key === 'duty');
+  const open = loop.openMode ? frame?.modes?.find((m) => m.key === loop.openMode) : undefined;
   // Current signal: the measured signal of a loop in amperes, else the first A signal that is
   // not a supply (bus.*) reading.
   const ampLoop = def.tuner.loops.find((l) => l.unit === 'A');
@@ -98,7 +98,7 @@ export function loopContext(def: ModelDef, loop: TunerLoopDef): LoopContext {
     unit: loop.unit,
     outputUnit: signalByKey(def, loop.signals.output)?.unit ?? '',
     currentUnit: currentKey ? (signalByKey(def, currentKey)?.unit ?? 'A') : 'A',
-    integrating: loop.key === 'position',
+    integrating: loop.integrating === true,
     roles,
     periodUs: Math.max(def.stream.minPeriodUs, 1000),
     range: measured?.range ?? [-1, 1],

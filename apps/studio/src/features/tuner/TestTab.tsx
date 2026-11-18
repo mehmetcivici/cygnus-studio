@@ -4,7 +4,7 @@ import { useI18n } from '../../i18n';
 import { Button, Kbd, NumberField, Select, Slider, Sparkline, cx } from '../../ui';
 import { useTuner } from './controller';
 import { targetBlock } from './loop';
-import { SIGNAL_KINDS, sampleSignal, signalDuration, type SignalConfig, type SignalKind } from './signals';
+import { SIGNAL_KINDS, sampleSignal, signalDuration, signalExtent, type SignalConfig, type SignalKind } from './signals';
 import { useTunerUi } from './state';
 import { tTuner } from './messages';
 
@@ -116,6 +116,7 @@ export function TestTab() {
               <Sparkline values={preview} height={34} />
               <span className="cy-mono">{fmtValue(T, 's', 1)}</span>
             </div>
+            {!ctx.integrating && s.kind !== 'chirp' && <StepSizeNote />}
             {api.signalBlock && <p className="tuner-hint tuner-hint--danger">{tTuner(`block.${api.signalBlock}`)}</p>}
             <div className="tuner-actions">
               <Button size="sm" icon={GitCompareArrows} disabled={!api.armed || busy || api.signalBlock !== null} onClick={() => void api.runAB()}>
@@ -133,6 +134,22 @@ export function TestTab() {
   );
 }
 
+/** States the size of the configured test against the limit, so a large step is a choice. */
+function StepSizeNote() {
+  const { fmtValue, fmtPercent } = useI18n();
+  const { config, ctx } = useTuner();
+  const [lo, hi] = signalExtent(config.signal);
+  const peak = Math.max(Math.abs(lo), Math.abs(hi));
+  const lim = config.limits.maxAmplitude;
+  if (!(lim > 0)) return null;
+  const share = peak / lim;
+  return (
+    <p className={cx('tuner-hint', share > 0.5 && 'tuner-hint--warn')}>
+      {tTuner(share > 0.5 ? 'gen.sizeLarge' : 'gen.size', { peak: fmtValue(peak, ctx.unit, ctx.digits), share: fmtPercent(share, 0, { ratio: true }) })}
+    </p>
+  );
+}
+
 function ManualControl() {
   const { fmtValue } = useI18n();
   const api = useTuner();
@@ -140,13 +157,20 @@ function ManualControl() {
   const lim = config.limits;
   const lo = ctx.integrating ? lim.rangeMin : -lim.maxAmplitude;
   const hi = ctx.integrating ? lim.rangeMax : lim.maxAmplitude;
-  const [v, setV] = useState(() => (ctx.integrating ? (api.driver?.value(ctx.idx.measured) ?? 0) : 0));
+  const safe = (): number => api.driver?.safeTarget() ?? 0;
+  const [v, setV] = useState(safe);
   const step = (hi - lo) / 200;
+  // Every stop resets the target: re-enabling starts from the safe target, never from the
+  // value held before the stop (review: re-arm restored the old target).
+  useEffect(() => {
+    setV(safe());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api.armed]);
   useEffect(() => {
     if (api.armed) api.setHold(v);
-    // Only push when the user moves the control or arms.
+    // Only push when the user moves the control.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [v, api.armed]);
+  }, [v]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;

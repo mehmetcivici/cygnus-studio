@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { Cable, FlaskConical, SlidersHorizontal } from 'lucide-react';
 import { Button, EmptyState, Page, Spinner, cx } from '../../ui';
 import { useI18n } from '../../i18n';
-import { DriveBanner, connection, useConnection, useDevices, useUnresolved, type DeviceView } from '../../core';
+import { connection, useConnection, useDevices, useUnresolved, type DeviceView } from '../../core';
 import { navigate } from '../../app/nav';
 import type { FeatureProps } from '../registry';
 import { TunerProvider, useTuner, useTunerController, useTunerDevice } from './controller';
@@ -118,8 +118,7 @@ function Workspace() {
     return () => ro.disconnect();
   }, []);
   return (
-    <div ref={ref} className={cx('tuner', api.armed && 'is-armed', narrow && 'is-narrow')}>
-      <DriveBanner session={api.session} />
+    <div ref={ref} className={cx('tuner', narrow && 'is-narrow')}>
       <div className="tuner__grid">
         {!narrow && <LeftColumn />}
         <div className="tuner__middle">

@@ -286,6 +286,7 @@ export type TipKey =
   | 'oscillating'
   | 'saturating'
   | 'noisy'
+  | 'notReached'
   | 'good';
 
 export interface MetricGrade {
@@ -293,8 +294,21 @@ export interface MetricGrade {
   grade: Grade;
 }
 
+/** Steady error (% of the step) beyond which the time metrics describe a response that never arrived. */
+export const NOT_REACHED_PCT = 10;
+/** Metrics measured against the target: meaningless (shown as —, never "good") when it was not reached. */
+export const TIME_METRICS: readonly MetricKey[] = ['riseTime', 'peakTime', 'overshoot', 'settlingTime', 'damping', 'iae', 'itae'];
+
+/** False when the time metrics of this step describe a response that never arrived. */
+export function reachedTarget(m: StepMetrics): boolean {
+  return !m.noResponse && m.steadyErrorPct < NOT_REACHED_PCT;
+}
+
 /** Grades each metric and returns the tips that apply, most important first. */
-export function gradeStep(m: StepMetrics, ctx: { hasKi: boolean; hasFf: boolean } = { hasKi: true, hasFf: false }): { grades: MetricGrade[]; tips: TipKey[] } {
+export function gradeStep(
+  m: StepMetrics,
+  ctx: { hasKi: boolean; hasFf: boolean } = { hasKi: true, hasFf: false },
+): { grades: MetricGrade[]; tips: TipKey[]; reached: boolean } {
   const step = Math.abs(m.to - m.from) || 1;
   const g = (key: MetricKey, grade: Grade): MetricGrade => ({ key, grade });
   const os = m.overshoot;
@@ -316,7 +330,16 @@ export function gradeStep(m: StepMetrics, ctx: { hasKi: boolean; hasFf: boolean 
     return {
       grades: grades.map((x) => (x.key === 'steadyError' || x.key === 'saturation' || x.key === 'noiseRms' ? x : { ...x, grade: x.key === 'settlingTime' ? 'poor' : 'info' })),
       tips: m.saturation >= 30 ? ['noResponse', 'saturating'] : ['noResponse'],
+      reached: false,
     };
+  }
+  // A response that stops at 44 % of the step can be "fast and without overshoot": the time
+  // metrics must not call that good (review: everything green while 56 % short).
+  if (!(m.steadyErrorPct < NOT_REACHED_PCT)) {
+    const out: TipKey[] = ['notReached'];
+    if (m.saturation >= 30) out.push('saturating');
+    out.push(ctx.hasFf && !ctx.hasKi ? 'steadyErrorFf' : 'steadyError');
+    return { grades: grades.map((x) => (TIME_METRICS.includes(x.key) ? { ...x, grade: 'info' } : x)), tips: out, reached: false };
   }
   if (m.saturation >= 30) tips.push('saturating');
   if (os >= 20) tips.push('overshootHigh');
@@ -327,7 +350,7 @@ export function gradeStep(m: StepMetrics, ctx: { hasKi: boolean; hasFf: boolean 
   else if (settleRatio > 10 && os < 5) tips.push('slow');
   if (Number.isFinite(m.noiseRms) && (m.noiseRms / step) * 100 >= 2) tips.push('noisy');
   if (!tips.length) tips.push('good');
-  return { grades, tips };
+  return { grades, tips, reached: true };
 }
 
 /** Single score for ranking runs (lower is better): ITAE normalised by the step size. */

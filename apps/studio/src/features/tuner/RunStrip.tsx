@@ -6,6 +6,7 @@ import { downloadFile, safeFileName } from '../../core';
 import { useTuner } from './controller';
 import { setUi, toggleSelected, useTunerUi } from './state';
 import { headline, runLabelKey, runsToCsv, runsToJson } from './runs';
+import { reachedTarget } from './analysis/step';
 import { removeRuns } from './project';
 import { bestRun } from './CenterColumn';
 import type { TunerRun } from './types';
@@ -75,7 +76,9 @@ function RunCard({ run, selected, focused, best }: { run: TunerRun; selected: bo
   }, [run]);
   const a = run.analysis;
   const line = m
-    ? `${fmtValue(m.overshoot, '%', 0)} · ${Number.isNaN(m.settlingTime) ? '—' : fmtValue(m.settlingTime, 's', 2)}`
+    ? !reachedTarget(m)
+      ? tTuner('metrics.notReachedShort')
+      : `${fmtValue(m.overshoot, '%', 0)} · ${Number.isNaN(m.settlingTime) ? '—' : fmtValue(m.settlingTime, 's', 2)}`
     : a.ff
       ? `R² ${fmtNumber(a.ff.r2, 3)}`
       : a.relay

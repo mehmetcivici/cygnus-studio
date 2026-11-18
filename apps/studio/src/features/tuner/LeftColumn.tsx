@@ -7,7 +7,7 @@ import { Badge, IconButton, NumberField, Panel, SegmentedControl, Slider, Toolti
 import { DevicePicker, ParamField } from '../../core';
 import { navigate } from '../../app/nav';
 import { isTunable, useTuner } from './controller';
-import { cascadeOf, gainParam } from './loop';
+import { ROLE_SYMBOL, cascadeOf, gainParam } from './loop';
 import { baseline, historyDepth, setUi, useHistoryVersion } from './state';
 import type { GainSetId } from './types';
 import { tTuner } from './messages';
@@ -99,7 +99,6 @@ function shortLabel(p: ParamDef, tl: (t: { tr: string; en: string }) => string):
   return i >= 0 ? s.slice(i + 3) : s;
 }
 
-const ROLE_SYMBOL: Record<GainRole, string> = { kp: 'Kp', ki: 'Ki', kd: 'Kd', kS: 'kS', kV: 'kV', kA: 'kA', iMax: 'Imax', outMax: 'Omax' };
 
 export function GainPanel() {
   const api = useTuner();

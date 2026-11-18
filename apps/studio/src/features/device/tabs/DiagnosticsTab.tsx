@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { CircleCheck, CircleX, ClipboardCheck, Info, Lightbulb, OctagonX, Play, ShieldAlert, Wrench } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CircleCheck, CircleX, ClipboardCheck, Info, Lightbulb, Move, OctagonX, Play, ShieldAlert, TriangleAlert, Wrench } from 'lucide-react';
 import { DeviceState, type ActionDef, type SelfTestResult } from '@cygnus/protocol';
 import { hasMessage, useI18n } from '../../../i18n';
-import { Badge, Button, ConfirmDialog, EmptyState, NumberField, Panel, Spinner, toast, cx } from '../../../ui';
-import { FaultList, clearEstop, describeError, fmtFw, useDrive, useParam, type DeviceView } from '../../../core';
+import { Badge, Button, ConfirmDialog, EmptyState, Modal, NumberField, Panel, Spinner, toast, cx } from '../../../ui';
+import { ArmButton, FaultList, clearEstop, describeError, fmtFw, useDrive, useDriveSession, useParam, type DeviceView } from '../../../core';
+import { movesActuator } from '../logic/actions';
 import { tDevice } from '../messages';
 
 const STATE_NAMES = ['boot', 'bootloader', 'idle', 'active', 'fault', 'estop'] as const;
@@ -158,15 +159,19 @@ function ActionRow({ device, action }: { device: DeviceView; action: ActionDef }
   const [confirm, setConfirm] = useState(false);
   const [running, setRunning] = useState(false);
   const [ticks, setTicks] = useState(0);
-  const run = async (): Promise<void> => {
-    setConfirm(false);
+  const moving = movesActuator(action);
+  const run = async (): Promise<boolean> => {
+    // A moving action keeps its dialog (and drive session) open until it ends.
+    if (!moving) setConfirm(false);
     setRunning(true);
     setTicks(0);
     try {
       const r = await device.handle.command(action.key, action.arg ? arg : 0, { onProgress: () => setTicks((n) => n + 1) });
       toast.success(tDevice('diag.actionDone', { action: tl(action.label) }), { description: r.result ? tDevice('diag.actionResult', { value: fmtNumber(r.result, 0) }) : undefined });
+      return true;
     } catch (e) {
       toast.error(tDevice('diag.actionFailed', { action: tl(action.label) }), { description: describeError(e, lang) });
+      return false;
     } finally {
       setRunning(false);
     }
@@ -176,10 +181,16 @@ function ActionRow({ device, action }: { device: DeviceView; action: ActionDef }
       <div className="dv-action__text">
         <div className="dv-action__title">
           {tl(action.label)}
-          {action.confirm && (
-            <Badge size="sm" tone="caution">
-              {tDevice('diag.needsConfirm')}
+          {moving ? (
+            <Badge size="sm" tone="danger" icon={Move}>
+              {tDevice('diag.moves')}
             </Badge>
+          ) : (
+            action.confirm && (
+              <Badge size="sm" tone="caution">
+                {tDevice('diag.needsConfirm')}
+              </Badge>
+            )
           )}
           {action.longRunning && <Badge size="sm">{tDevice('diag.long')}</Badge>}
         </div>
@@ -193,20 +204,95 @@ function ActionRow({ device, action }: { device: DeviceView; action: ActionDef }
       {action.arg && (
         <NumberField value={arg} onCommit={setArg} min={action.arg.min} max={action.arg.max} unit={action.arg.unit} size="sm" width={130} ariaLabel={tl(action.arg.label)} />
       )}
-      <Button size="sm" variant={action.confirm ? 'secondary' : 'ghost'} icon={Play} loading={running} disabled={!device.online} onClick={() => (action.confirm ? setConfirm(true) : void run())}>
+      <Button size="sm" variant={action.confirm || moving ? 'secondary' : 'ghost'} icon={Play} loading={running} disabled={!device.online} onClick={() => (action.confirm || moving ? setConfirm(true) : void run())}>
         {tDevice('diag.run')}
       </Button>
-      <ConfirmDialog
-        open={confirm}
-        tone="danger"
-        title={tl(action.label)}
-        message={tl(action.help)}
-        confirmLabel={tDevice('diag.run')}
-        onConfirm={() => void run()}
-        onCancel={() => setConfirm(false)}
-      />
+      {moving ? (
+        confirm && <MovingActionDialog device={device} action={action} run={run} onClose={() => setConfirm(false)} />
+      ) : (
+        <ConfirmDialog
+          open={confirm}
+          tone="danger"
+          title={tl(action.label)}
+          message={tl(action.help)}
+          confirmLabel={tDevice('diag.run')}
+          onConfirm={() => void run()}
+          onCancel={() => setConfirm(false)}
+        />
+      )}
     </li>
   );
+}
+
+/**
+ * An action that moves the mechanism runs like any other drive: inside a drive session, after
+ * the hold-to-arm button. A neutral CTRL cancels it on the board (PROTOCOL §4.5), so every cut of
+ * the session while it runs (focus loss, screen change, Space, leaving the dialog) sends one.
+ */
+function MovingActionDialog({ device, action, run, onClose }: { device: DeviceView; action: ActionDef; run: () => Promise<boolean>; onClose: () => void }) {
+  const { tl } = useI18n();
+  const { session, busyOwner } = useDriveSession(MOVE_OWNER, device.uid48);
+  const [phase, setPhase] = useState<'ready' | 'running'>('ready');
+  const runningRef = useRef(false);
+  const cancel = useRef(() => {});
+  cancel.current = () => {
+    if (!runningRef.current) return;
+    runningRef.current = false;
+    cancelAction(device);
+    toast.warn(tDevice('diag.moveCut'), { id: 'dv-move-cut' });
+  };
+  useEffect(() => session?.onDisarm(() => cancel.current()), [session]);
+  // Leaving the screen mid-action is a cut too.
+  useEffect(() => () => cancel.current(), []);
+  const start = async (): Promise<void> => {
+    if (!session?.armed) return;
+    runningRef.current = true;
+    setPhase('running');
+    await run();
+    const stillMine = runningRef.current;
+    runningRef.current = false;
+    // Back to neutral whatever happened; the session is this dialog's only.
+    session.disarm('released');
+    if (stillMine) onClose();
+  };
+  return (
+    <Modal
+      open
+      onClose={phase === 'running' ? () => undefined : onClose}
+      title={tl(action.label)}
+      size="sm"
+      footer={
+        <Button onClick={onClose} disabled={phase === 'running'}>
+          {tDevice('diag.cancel')}
+        </Button>
+      }
+    >
+      <div className="dv-move">
+        <div className="dv-strip dv-strip--danger">
+          <TriangleAlert size={15} aria-hidden />
+          <span>{tDevice('diag.moveWarn')}</span>
+        </div>
+        <p className="dv-note">{tl(action.help)}</p>
+        <div className="dv-control__arm">
+          <ArmButton session={session} size="lg" disabled={!device.online} label={tDevice('diag.moveArm')} onArmed={() => void start()} />
+        </div>
+        <p className="dv-note">{busyOwner ? tDevice('control.busy', { owner: busyOwner }) : phase === 'running' ? tDevice('diag.moveRunning') : tDevice('diag.moveHelp')}</p>
+      </div>
+    </Modal>
+  );
+}
+
+const MOVE_OWNER = 'device';
+
+/** Neutral one-shot CTRL on the board's `set` frame: cancels a running moving action (FAILED). */
+function cancelAction(device: DeviceView): void {
+  const frame = device.def?.controls.find((c) => c.format === 'set');
+  const neutral = frame?.modes?.find((m) => m.key === 'off') ?? frame?.modes?.[0];
+  try {
+    if (neutral) device.handle.control.set(neutral.key, 0);
+  } catch {
+    // Board gone or link down: nothing left to cancel.
+  }
 }
 
 function ActionsPanel({ device }: { device: DeviceView }) {
