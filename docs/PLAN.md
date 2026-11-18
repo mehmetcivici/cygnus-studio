@@ -7,21 +7,35 @@ Sunum takvimindeki karşılığı: bu çalışma **Alfa** hedefini (Şub–Nis 2
 | Kod | İş paketi | Durum |
 |---|---|---|
 | P0 | Mimari, CyCAN v1 protokolü, cihaz isterleri | Tamam |
-| P1 | Protokol çekirdeği: kimlik, codec, katalog, slcan, `.cyfw`, altın vektörler | Sürüyor |
-| U0 | Arayüz temeli: tema, bileşenler, dil, kabuk, canlı grafik | Sürüyor |
-| P2 | Host istemcisi: keşif, çakışma çözme, parametre, akış, firmware, sürücü soyutlaması | Bekliyor (P1) |
-| S1 | Simülatör: sanal hat, sanal kartlar, fizik modelleri, senaryolar | Bekliyor (P1) |
-| A1 | Uygulama çekirdeği: bağlantı, durum deposu, kayıt, Hat ve Cihaz ekranları | Bekliyor (P2, S1, U0) |
-| A2 | Tuner | Bekliyor (A1) |
-| A3 | Grafik + CAN İzleyici | Bekliyor (A1) |
-| A4 | Firmware + Proje ekranları | Bekliyor (A1) |
-| V0 | Araç şablonları paketi (`@cygnus/vehicles`) | Bekliyor (P1) |
-| A5 | Araç ekranı: şablon seçimi, yuva atama, motor testi, canlı şema | Bekliyor (A1, V0) |
-| H1 | Eski Cyncoder v3 sürücüsü + seri port (WebSerial) | Bekliyor (P2) |
-| H2 | Tauri masaüstü kabuğu + CI | Bekliyor (A1) |
-| F1 | Firmware C kütüphanesi (`firmware/cycan`) + altın vektör testleri | Bekliyor (P1) |
-| Q1 | Bağımsız inceleme, bütünleşik test, ekran doğrulaması | Bekliyor |
-| D1 | Canlı demo, GitHub, belgeler | Bekliyor |
+| P1 | Protokol çekirdeği, katalog, slcan, `.cyfw`, altın vektörler | Tamam |
+| P2 | Host istemcisi | Tamam |
+| S1 | Simülatör | Tamam |
+| V0 | Araç şablonları (`@cygnus/vehicles`) | Tamam |
+| F1 | Firmware C kütüphanesi (`firmware/cycan`) | Tamam (STM32 örneği gerçek HAL ile derlenmedi) |
+| H1 | Eski Cyncoder v3 sürücüsü, roboRIO köprüsü, WebSerial | Tamam (SET_CONFIG yok) |
+| H2 | Tauri kabuğu + CI | Tamam (pencere/paket/Actions denenmedi) |
+| I1 | Host ↔ simülatör bütünleştirme | Tamam |
+| U0, A1 | Arayüz temeli, uygulama çekirdeği, Hat ekranı | Tamam |
+| A2–A6 | Tuner, Cihaz, Araç, Grafik, CAN İzleyici, Firmware, Proje ekranları | Tamam |
+| Q1 | Bağımsız inceleme (3–4 ajan) ve düzeltme turu | **Yapılmadı** |
+| D1 | Canlı demo yayını, GitHub'a gönderim | **Yapılmadı** (repo bekleniyor) |
+
+Son doğrulama (2026-11-18): `npm run typecheck` temiz · 784 TypeScript testi · C kütüphanesi 31 test · `cygnus-link` 8 test · arayüz derlemesi hatasız.
+
+## Açık işler (düzeltme turu)
+
+1. Açılışta `state = BOOT` heartbeat'i (PROTOCOL §4.1) kodda yok: simülatör, C kütüphanesi ve host'a eklenecek; host önbelleği buna göre geçersiz kılacak.
+2. Protokole `COMMAND LOAD_SAVED` (kalıcı bellekten yeniden yükle) eklenecek; Cihaz ekranındaki "kayıtlıya dön" buna bağlanacak.
+3. Host firmware güncellemesi: `ENTER_BOOTLOADER` yeniden denemesi; son ACK kaybında heartbeat sürümünden doğrulama (şu an arayüz katmanı örtüyor).
+4. Çekirdek `paramCache`: kart yeniden başlarken/kayıpken parametre okumasın.
+5. Kabuk: firmware güncellemesi sırasında gezinme/bağlantı kesme kilidi; durum çubuğunda firmware yuvası.
+6. Kaydedici: yüksek hız (akış) örnekleri kayda girsin.
+7. Bağlantı yöneticisi: senaryo seçenekleri (`assigned: false`); Araç ekranı şu an `factoryReset` ile dolanıyor.
+8. Araç şeması: swerve modül simgeleri üst üste biniyor; dar şablonlar (kol, Ackermann) küçük.
+9. Tuner: sistem tanıma τ/θ ayrımı bazen karışıyor; katalogda açık döngü kipi açıkça işaretlenmeli; `StaticChart`'a logaritmik eksen.
+10. CAN İzleyici 25 kartlı hatta ölçülmedi; Cihaz ekranında bootloader ve bilinmeyen model durumları denenmedi.
+11. Eski Cyncoder `SET_CONFIG` yükü: `can_handler.h` / `backend/can_protocol.py` gerekli.
+12. Host kütüphaneleri (Gemstone/Pixhawk/Arduino) yazılmadı.
 
 ## Donanım geldiğinde yapılacaklar
 
