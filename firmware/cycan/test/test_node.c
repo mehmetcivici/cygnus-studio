@@ -84,7 +84,7 @@ static uint8_t esc_command(cycan_node_t *n, uint8_t cmd, uint32_t arg, uint32_t 
         cycan_fault_set(n, CYCAN_FAULT_OVERCURRENT, CYCAN_FAULT_ACTIVE);
         return CYCAN_CMDST_OK;
     }
-    if (cmd == CYCAN_ESC20A_CMD_MEASURE_MOTOR) return CYCAN_CMDST_IN_PROGRESS;
+    if (cmd == CYCAN_ESC20A_CMD_MEASURE_MOTOR || cmd == CYCAN_ESC20A_CMD_CALIBRATE_PWM) return CYCAN_CMDST_IN_PROGRESS;
     if (cmd == CYCAN_ESC20A_CMD_SET_POSITION) {
         *result = 42;
         return CYCAN_CMDST_OK;
@@ -115,11 +115,14 @@ static bool esc_validate(cycan_node_t *n, const cycan_param_t *p, cycan_pval_t v
     return false;
 }
 
+static const uint8_t k_esc_moving[] = CYCAN_ESC20A_MOVING_CMDS;
+
 static const cycan_app_t k_esc_app = {
     CYCAN_MODEL_ESC20A, CYCAN_ESC20A_DEVTYPE, 3, 1, 2, 3, CYCAN_ESC20A_CATALOG_REV, 2, 0xDEADBEEFu, 321, true,
     true, CYCAN_ESC20A_STREAM_MIN_PERIOD_US, CYCAN_ESC20A_STATUS_FRAME_COUNT,
     k_esc_params, (uint16_t)(sizeof k_esc_params / sizeof k_esc_params[0]),
     esc_status, esc_signal, esc_ctrl, esc_command, esc_neutral, esc_validate,
+    k_esc_moving, (uint8_t)sizeof k_esc_moving,
 };
 
 /* ---- Cyncoder application (sensor: no CTRL, no commands) ------------------------- */
@@ -135,7 +138,7 @@ static const cycan_app_t k_cyn_app = {
     CYCAN_MODEL_CYNCODER, CYCAN_CYNCODER_DEVTYPE, 1, 1, 5, 0, CYCAN_CYNCODER_CATALOG_REV, 1, 0, 0, false,
     false, CYCAN_CYNCODER_STREAM_MIN_PERIOD_US, CYCAN_CYNCODER_STATUS_FRAME_COUNT,
     k_cyn_params, (uint16_t)(sizeof k_cyn_params / sizeof k_cyn_params[0]),
-    NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0,
 };
 
 /* ---- Fixture --------------------------------------------------------------------- */
@@ -697,12 +700,12 @@ void test_node_status_periods(void)
     const cycan_frame_t *f;
     setup(1);
     run_ms(&node, &now, 1000);
-    /* Catalog defaults: 10, 20, 50, 100, 500 ms. */
-    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 0) >= 99 && fake_count(&fk, CYCAN_CLS_STATUS, 0) <= 101);
-    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 1) >= 49 && fake_count(&fk, CYCAN_CLS_STATUS, 1) <= 51);
-    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 2) >= 19 && fake_count(&fk, CYCAN_CLS_STATUS, 2) <= 21);
-    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 3) >= 9 && fake_count(&fk, CYCAN_CLS_STATUS, 3) <= 11);
-    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 4) >= 1 && fake_count(&fk, CYCAN_CLS_STATUS, 4) <= 3);
+    /* Catalog defaults (PROTOCOL 10.1): 20, 50, 100, 200, 1000 ms. */
+    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 0) >= 49 && fake_count(&fk, CYCAN_CLS_STATUS, 0) <= 51);
+    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 1) >= 19 && fake_count(&fk, CYCAN_CLS_STATUS, 1) <= 21);
+    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 2) >= 9 && fake_count(&fk, CYCAN_CLS_STATUS, 2) <= 11);
+    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 3) >= 4 && fake_count(&fk, CYCAN_CLS_STATUS, 3) <= 6);
+    CHECK(fake_count(&fk, CYCAN_CLS_STATUS, 4) >= 1 && fake_count(&fk, CYCAN_CLS_STATUS, 4) <= 2);
     f = fake_find(&fk, CYCAN_CLS_STATUS, 3, 0);
     CHECK(f != NULL && f->len == 8 && f->data[0] == 3 && f->data[7] == 0x5A && f->id == cycan_id_encode(DT, CYCAN_CLS_STATUS, 3, 1));
 
@@ -1079,6 +1082,55 @@ void test_node_estop_order(void)
     cycan_command_finish(&node, CYCAN_ESC20A_CMD_MEASURE_MOTOR, CYCAN_CMDST_OK, 1);
     CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_COMMAND_RSP), 0);
     CHECK_EQ(command(CYCAN_ESC20A_CMD_SET_POSITION, 0, NULL), CYCAN_CMDST_OK); /* nothing pending */
+}
+
+static uint8_t last_command_rsp(uint8_t cmd)
+{
+    cycan_command_rsp_t r;
+    const cycan_frame_t *rf = fake_last(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_COMMAND_RSP);
+    if (rf == NULL || !cycan_dec_command_rsp(rf->data, rf->len, &r) || r.cmd != cmd) return 0xFF;
+    return r.status;
+}
+
+/* PROTOCOL 4.5: a neutral CTRL cancels a running moving command with FAILED; so does any other
+ * event that forces the board neutral (here the CTRL timeout). Non-moving commands are kept. */
+void test_node_moving_abort(void)
+{
+    setup(1);
+    CHECK_EQ(command(CYCAN_ESC20A_CMD_MEASURE_MOTOR, 0, NULL), CYCAN_CMDST_IN_PROGRESS);
+    fake_clear(&fk);
+    app_log.neutral_calls = 0;
+    send_neutral();
+    run_ms(&node, &now, 1);
+    CHECK_EQ(last_command_rsp(CYCAN_ESC20A_CMD_MEASURE_MOTOR), CYCAN_CMDST_FAILED);
+    CHECK_EQ(app_log.neutral_calls, 1);
+    CHECK_EQ(app_log.neutral_reason, CYCAN_NEUTRAL_ABORT);
+    /* The neutral command still arms the index: driving works right after. */
+    send_ctrl();
+    run_ms(&node, &now, 1);
+    CHECK(node.enabled);
+    send_neutral();
+    run_ms(&node, &now, 1);
+    /* Late finish is dropped; the next command runs. */
+    fake_clear(&fk);
+    cycan_command_finish(&node, CYCAN_ESC20A_CMD_MEASURE_MOTOR, CYCAN_CMDST_OK, 1);
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_COMMAND_RSP), 0);
+
+    /* CTRL timeout while a moving command runs: FAILED, not a hung command. */
+    CHECK_EQ(command(CYCAN_ESC20A_CMD_MEASURE_MOTOR, 0, NULL), CYCAN_CMDST_IN_PROGRESS);
+    fake_clear(&fk);
+    run_ms(&node, &now, 1000u);
+    CHECK_EQ(last_command_rsp(CYCAN_ESC20A_CMD_MEASURE_MOTOR), CYCAN_CMDST_FAILED);
+    CHECK_EQ(command(CYCAN_ESC20A_CMD_SET_POSITION, 0, NULL), CYCAN_CMDST_OK);
+
+    /* A command outside moving_cmds is not cancelled by a neutral CTRL. */
+    CHECK_EQ(command(CYCAN_ESC20A_CMD_CALIBRATE_PWM, 0, NULL), CYCAN_CMDST_IN_PROGRESS);
+    fake_clear(&fk);
+    send_neutral();
+    run_ms(&node, &now, 1);
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_COMMAND_RSP), 0);
+    cycan_command_finish(&node, CYCAN_ESC20A_CMD_CALIBRATE_PWM, CYCAN_CMDST_OK, 0);
+    CHECK_EQ(last_command_rsp(CYCAN_ESC20A_CMD_CALIBRATE_PWM), CYCAN_CMDST_OK);
 }
 
 void test_node_commands(void)

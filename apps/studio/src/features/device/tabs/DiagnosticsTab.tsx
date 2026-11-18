@@ -286,10 +286,8 @@ const MOVE_OWNER = 'device';
 
 /** Neutral one-shot CTRL on the board's `set` frame: cancels a running moving action (FAILED). */
 function cancelAction(device: DeviceView): void {
-  const frame = device.def?.controls.find((c) => c.format === 'set');
-  const neutral = frame?.modes?.find((m) => m.key === 'off') ?? frame?.modes?.[0];
   try {
-    if (neutral) device.handle.control.set(neutral.key, 0);
+    device.handle.abortAction();
   } catch {
     // Board gone or link down: nothing left to cancel.
   }

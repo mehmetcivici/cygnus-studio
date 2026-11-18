@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, ChartLine, GitCompareArrows, OctagonAlert, Square, Star, Unplug, Waves } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { Button, EmptyState, LiveChart, ProgressBar, SegmentedControl, StaticChart, chartColor, cx, resolveColor, useTheme, type LiveSeries, type StaticSeries } from '../../ui';
+import { Button, EmptyState, LiveChart, ProgressBar, SegmentedControl, StaticChart, chartColor, cx, resolveColor, useTheme, type ChartGuide, type ChartMarker, type LiveSeries, type StaticSeries } from '../../ui';
 import { FaultList, useDrive } from '../../core';
-import { svgLineChart } from './svg';
 import { useTuner } from './controller';
 import { setUi, useTunerUi, type CenterView } from './state';
 import { headline } from './runs';
@@ -315,61 +314,55 @@ function CompareView() {
 }
 
 function BodeView() {
-  const { fmtNumber, lang } = useI18n();
+  const { fmtNumber } = useI18n();
   const api = useTuner();
   const focus = useTunerUi((s) => s.focus);
-  const theme = useTheme((s) => s.theme);
   const run = api.runs.find((r) => r.id === focus && r.analysis.bode) ?? [...api.runs].reverse().find((r) => r.analysis.bode);
-  const svgs = useMemo(() => {
-    const b = run?.analysis.bode;
+  const b = run?.analysis.bode;
+  const charts = useMemo(() => {
     if (!b) return null;
-    void theme;
-    const colors = { axis: resolveColor('chart-axis'), grid: resolveColor('chart-grid'), text: resolveColor('var(--cy-text-2)') };
-    const fmt = (v: number, d: number) => fmtNumber(v, d, { grouping: false });
-    const c1 = resolveColor('chart-1');
-    const c2 = resolveColor('chart-2');
-    const c3 = resolveColor('chart-3');
-    const warn = resolveColor('var(--cy-warn)');
     const mg = b.margins;
-    const common = { width: 720, height: 230, xLog: true, colors, fmt, legend: true, fontFamily: 'Lato, sans-serif' };
-    const vLines = [
-      ...(Number.isFinite(mg.gainCrossHz) ? [{ x: mg.gainCrossHz, color: warn, label: 'ωc' }] : []),
-      ...(Number.isFinite(mg.phaseCrossHz) ? [{ x: mg.phaseCrossHz, color: c3, label: 'ω180' }] : []),
+    const markers: ChartMarker[] = [
+      ...(Number.isFinite(mg.gainCrossHz) ? [{ x: mg.gainCrossHz, color: 'var(--cy-warn)', label: 'ωc', dashed: true }] : []),
+      ...(Number.isFinite(mg.phaseCrossHz) ? [{ x: mg.phaseCrossHz, color: 'chart-3', label: 'ω180', dashed: true }] : []),
     ];
-    const mag = svgLineChart({
-      ...common,
-      yLabel: 'dB',
-      series: [
-        { x: b.f, y: b.loopDb, color: c1, label: tTuner('bode.loop'), width: 2 },
-        { x: b.f, y: b.closedDb, color: c2, label: tTuner('bode.closed'), dash: '5 3' },
-        { x: b.f, y: b.plantDb, color: c3, label: tTuner('bode.plant'), dots: true },
-      ],
-      hLines: [{ y: 0, color: warn }],
-      vLines,
-    });
-    const ph = svgLineChart({
-      ...common,
-      xLabel: tTuner('bode.freq'),
-      yLabel: '°',
-      series: [
-        { x: b.f, y: b.loopDeg, color: c1, label: tTuner('bode.loop'), width: 2 },
-        { x: b.f, y: b.closedDeg, color: c2, label: tTuner('bode.closed'), dash: '5 3' },
-      ],
-      hLines: [{ y: -180, color: warn }],
-      vLines,
-    });
-    return { mag, ph };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, theme, lang]);
-  if (!run || !svgs) return <EmptyState icon={Waves} title={tTuner('bode.emptyTitle')} description={tTuner('bode.emptyBody')} size="sm" />;
+    const mag: StaticSeries[] = [
+      { key: 'loop', label: tTuner('bode.loop'), x: b.f, y: b.loopDb, color: 'chart-1', unit: 'dB', width: 2, digits: 1 },
+      { key: 'closed', label: tTuner('bode.closed'), x: b.f, y: b.closedDb, color: 'chart-2', unit: 'dB', dash: [5, 3], digits: 1 },
+      { key: 'plant', label: tTuner('bode.plant'), x: b.f, y: b.plantDb, color: 'chart-3', unit: 'dB', points: true, width: 1, digits: 1 },
+    ];
+    const ph: StaticSeries[] = [
+      { key: 'loop', label: tTuner('bode.loop'), x: b.f, y: b.loopDeg, color: 'chart-1', unit: '°', width: 2, digits: 0 },
+      { key: 'closed', label: tTuner('bode.closed'), x: b.f, y: b.closedDeg, color: 'chart-2', unit: '°', dash: [5, 3], digits: 0 },
+    ];
+    return {
+      mag,
+      ph,
+      markers,
+      magGuides: [{ y: 0, color: 'var(--cy-warn)', label: '0 dB' }] as ChartGuide[],
+      phGuides: [{ y: -180, color: 'var(--cy-warn)', label: '−180°' }] as ChartGuide[],
+    };
+  }, [b]);
+  if (!run || !b || !charts) return <EmptyState icon={Waves} title={tTuner('bode.emptyTitle')} description={tTuner('bode.emptyBody')} size="sm" />;
+  const mg = b.margins;
+  const pm = Number.isFinite(mg.phaseMarginDeg) ? `${fmtNumber(mg.phaseMarginDeg, 0)}°` : '—';
+  const gm = Number.isFinite(mg.gainMarginDb) ? `${fmtNumber(mg.gainMarginDb, 1)} dB` : '∞';
   return (
     <div className="tuner-bode">
-      <div className="tuner-bode__title">
-        {tTuner('bode.title', { n: run.n })}
+      <div className="tuner-chart tuner-bode__chart">
+        <StaticChart
+          series={charts.mag}
+          xScale="log"
+          xUnit="Hz"
+          legend="bottom"
+          title={`${tTuner('bode.title', { n: run.n })} · PM ${pm} · GM ${gm}`}
+          markers={charts.markers}
+          guides={charts.magGuides}
+        />
       </div>
-      {/* Generated locally from numbers; labels are escaped in svgLineChart. */}
-      <div className="tuner-bode__svg" dangerouslySetInnerHTML={{ __html: svgs.mag }} />
-      <div className="tuner-bode__svg" dangerouslySetInnerHTML={{ __html: svgs.ph }} />
+      <div className="tuner-chart tuner-bode__chart">
+        <StaticChart series={charts.ph} xScale="log" xUnit="Hz" legend="bottom" title={tTuner('bode.phase')} markers={charts.markers} guides={charts.phGuides} />
+      </div>
     </div>
   );
 }

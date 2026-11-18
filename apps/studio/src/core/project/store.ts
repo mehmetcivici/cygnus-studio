@@ -140,11 +140,12 @@ export function projectFileName(): string {
   return fileName ?? `${safeFileName(project.name, 'cygnus-proje')}${PROJECT_EXT}`;
 }
 
-/** Downloads the project file and clears the dirty flag. */
-export function saveProjectToDisk(): void {
+/** Downloads the project file and clears the dirty flag. False when the download is not possible (online demo). */
+export function saveProjectToDisk(): boolean {
   const name = projectFileName();
-  downloadFile(name, projectText(), 'application/json');
+  if (!downloadFile(name, projectText(), 'application/json')) return false;
   useProject.setState({ dirty: false, fileName: name });
+  return true;
 }
 
 export type ProjectLoadResult = { ok: true; warnings: ProjectParseWarning[] } | { ok: false; error: ProjectParseError; detail?: string };

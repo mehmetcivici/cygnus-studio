@@ -87,3 +87,18 @@ describe('E-STOP keyboard (uygulama #3 core side)', () => {
     expect(fire).not.toHaveBeenCalled();
   });
 });
+
+describe('E-STOP keyboard: read-only text fields', () => {
+  it('Space in a read-only or disabled text field stops (CAN monitor while sending periodically)', () => {
+    const { fire, press } = setup();
+    const ro = el('input', { type: 'text', readonly: '' });
+    press(ro, ' ');
+    expect(fire).toHaveBeenCalledTimes(1);
+    const ta = el('textarea', { readonly: '' });
+    press(ta, ' ');
+    expect(fire).toHaveBeenCalledTimes(2);
+    const editable = el('input', { type: 'text' });
+    press(editable, ' ');
+    expect(fire).toHaveBeenCalledTimes(2);
+  });
+});

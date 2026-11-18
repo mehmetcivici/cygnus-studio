@@ -292,7 +292,11 @@ export class EscNode extends SimNode implements MotorDriver {
   protected override neutral(): void {
     this.ctrlMode = EscMode.OFF;
     this.setpoint = 0;
-    this.act = Act.NONE;
+    // PWM calibration only listens to the input; anything else stops (ESTOP stops it all).
+    if (this.act !== Act.CAL_PWM || this.estopped) {
+      this.act = Act.NONE;
+      this.driveKind = Drive.COAST;
+    }
     this.resetLoops();
   }
 

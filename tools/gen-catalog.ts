@@ -289,6 +289,10 @@ function catalogHeader(): string {
     }
     for (const s of m.signals) def(`${P}_SID_${cname(s.key)}`, `${s.sid}u`, s.unit || undefined);
     for (const a of m.actions) def(`${P}_CMD_${cname(a.key)}`, `${hex(a.cmd, 2)}u`, a.label.en);
+    const moving = m.actions.filter((a) => a.movesActuator === true);
+    if (moving.length > 0) {
+      def(`${P}_MOVING_CMDS`, `{ ${moving.map((a) => `${hex(a.cmd, 2)}u`).join(', ')} }`, 'cancelled by a neutral CTRL (cycan_app_t.moving_cmds)');
+    }
     for (const f of m.faults) def(`${P}_FAULT_${cname(f.key)}`, `${f.bit}u`, f.label.en);
     for (const b of m.selfTestBits) def(`${P}_SELFTEST_${cname(b.key)}`, `${b.bit}u`, b.label.en);
     for (const c of m.controls) for (const md of c.modes ?? []) def(`${P}_MODE_${cname(md.key)}`, `${md.value}u`, `CTRL/${c.index} ${md.label.en}`);

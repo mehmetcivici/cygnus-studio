@@ -100,3 +100,15 @@ describe('describeFrame', () => {
     expect(seen).toContain(enc.statusFrames[0]!.label.en);
   });
 });
+
+describe('describeFrame number format (tasarim B23)', () => {
+  it('uses the decimal comma in Turkish and °/s for angular rates', () => {
+    const ctrl = (lang: 'tr' | 'en') =>
+      describeFrame(at(encodeCtrlSet({ devType: 2, num: 4 }, { mode: 1, flags: 0, value: 0.25 })), { lang, modelAt }).fields.find((f) => f.key === 'value')?.value;
+    expect(ctrl('tr')).toMatch(/^0,25/);
+    expect(ctrl('en')).toMatch(/^0\.25/);
+    const gyro = getModel(M.GYRO)!;
+    expect(gyro.signals.filter((s) => s.key.startsWith('gyro.')).map((s) => s.unit)).toEqual(['°/s', '°/s', '°/s']);
+    expect(JSON.stringify(gyro)).not.toContain('"dps"');
+  });
+});

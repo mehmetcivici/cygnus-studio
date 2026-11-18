@@ -135,6 +135,7 @@
 #define CYCAN_ESC20A_CMD_MEASURE_MOTOR                           0x41u  /* Measure motor parameters */
 #define CYCAN_ESC20A_CMD_CALIBRATE_PWM                           0x42u  /* Calibrate PWM input */
 #define CYCAN_ESC20A_CMD_SET_POSITION                            0x43u  /* Reset position */
+#define CYCAN_ESC20A_MOVING_CMDS                                 { 0x40u, 0x41u }  /* cancelled by a neutral CTRL (cycan_app_t.moving_cmds) */
 #define CYCAN_ESC20A_FAULT_MOTOR_DISCONNECTED                    10u  /* Motor disconnected */
 #define CYCAN_ESC20A_FAULT_SENSOR_LOST                           11u  /* Sensor lost */
 #define CYCAN_ESC20A_FAULT_LOCKED_ROTOR                          12u  /* Locked rotor */
@@ -301,6 +302,7 @@
 #define CYCAN_ESC80A_CMD_MEASURE_MOTOR                           0x41u  /* Measure motor parameters */
 #define CYCAN_ESC80A_CMD_CALIBRATE_PWM                           0x42u  /* Calibrate PWM input */
 #define CYCAN_ESC80A_CMD_SET_POSITION                            0x43u  /* Reset position */
+#define CYCAN_ESC80A_MOVING_CMDS                                 { 0x40u, 0x41u }  /* cancelled by a neutral CTRL (cycan_app_t.moving_cmds) */
 #define CYCAN_ESC80A_FAULT_MOTOR_DISCONNECTED                    10u  /* Motor disconnected */
 #define CYCAN_ESC80A_FAULT_SENSOR_LOST                           11u  /* Sensor lost */
 #define CYCAN_ESC80A_FAULT_LOCKED_ROTOR                          12u  /* Locked rotor */
@@ -461,7 +463,7 @@
 #define CYCAN_GYRO_PID_FUSION_MODE                               0x0110u  /* enum */
 #define CYCAN_GYRO_PID_FUSION_CAL_ON_BOOT                        0x0111u  /* bool */
 #define CYCAN_GYRO_PID_FUSION_CAL_TIME_S                         0x0112u  /* f32 s */
-#define CYCAN_GYRO_PID_FUSION_MOTION_DPS                         0x0113u  /* f32 dps */
+#define CYCAN_GYRO_PID_FUSION_MOTION_DPS                         0x0113u  /* f32 deg/s */
 #define CYCAN_GYRO_PID_FUSION_YAW_INVERT                         0x0114u  /* bool */
 #define CYCAN_GYRO_PID_FUSION_YAW_WRAP                           0x0115u  /* enum */
 #define CYCAN_GYRO_PID_IMU_GYRO_RANGE                            0x0120u  /* enum */
@@ -476,9 +478,9 @@
 #define CYCAN_GYRO_SID_YAW                                       1u  /* deg */
 #define CYCAN_GYRO_SID_PITCH                                     2u  /* deg */
 #define CYCAN_GYRO_SID_ROLL                                      3u  /* deg */
-#define CYCAN_GYRO_SID_GYRO_X                                    4u  /* dps */
-#define CYCAN_GYRO_SID_GYRO_Y                                    5u  /* dps */
-#define CYCAN_GYRO_SID_GYRO_Z                                    6u  /* dps */
+#define CYCAN_GYRO_SID_GYRO_X                                    4u  /* deg/s */
+#define CYCAN_GYRO_SID_GYRO_Y                                    5u  /* deg/s */
+#define CYCAN_GYRO_SID_GYRO_Z                                    6u  /* deg/s */
 #define CYCAN_GYRO_SID_ACCEL_X                                   7u  /* g */
 #define CYCAN_GYRO_SID_ACCEL_Y                                   8u  /* g */
 #define CYCAN_GYRO_SID_ACCEL_Z                                   9u  /* g */
@@ -669,6 +671,7 @@
 #define CYCAN_SERVO16_SID_TEMP                                   19u  /* degC */
 #define CYCAN_SERVO16_CMD_CENTER_ALL                             0x40u  /* Center all channels */
 #define CYCAN_SERVO16_CMD_DISABLE_ALL                            0x41u  /* Disable all channels */
+#define CYCAN_SERVO16_MOVING_CMDS                                { 0x40u }  /* cancelled by a neutral CTRL (cycan_app_t.moving_cmds) */
 #define CYCAN_SERVO16_FAULT_RAIL_OVERCURRENT                     10u  /* Servo rail overcurrent */
 #define CYCAN_SERVO16_SELFTEST_PWM_DRIVER                        0u  /* PWM generator */
 #define CYCAN_SERVO16_SELFTEST_RAIL_SENSE                        1u  /* Rail voltage sensing */

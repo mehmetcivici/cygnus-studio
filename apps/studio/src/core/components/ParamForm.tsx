@@ -76,7 +76,7 @@ export interface ParamFormProps {
  * parameters. Values load with one `readAllParams` sweep.
  */
 export function ParamForm({ uid48, groups, toolbar = true, toolbarExtra, autoLoad = true, onApplied, className }: ParamFormProps) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const dev = useDevice(uid48);
   const advancedSetting = useSettings((s) => s.advanced);
   const [query, setQuery] = useState('');
@@ -177,6 +177,16 @@ export function ParamForm({ uid48, groups, toolbar = true, toolbarExtra, autoLoa
 
   const groupDefs = (dev.def?.groups ?? []).filter((g) => !groups || groups.includes(g.key));
   const ordered = groups ? groups.map((k) => groupDefs.find((g) => g.key === k)).filter((g): g is GroupDef => !!g) : groupDefs;
+  // Same filters as ParamGroup: when none of the groups shows anything, say so instead of a blank form.
+  const groupKeys = new Set(ordered.map((g) => g.key));
+  const q = query.trim();
+  const anyVisible = (dev.def?.params ?? []).some(
+    (p) =>
+      groupKeys.has(p.group) &&
+      (showAdvanced || !p.advanced || drafts[p.key] !== undefined) &&
+      matches(p, q, lang) &&
+      (!onlyChanged || isParamChanged(p, handle?.cachedParam(p.key)) || drafts[p.key] !== undefined),
+  );
 
   return (
     <ParamDraftContext.Provider value={api}>
@@ -196,6 +206,7 @@ export function ParamForm({ uid48, groups, toolbar = true, toolbarExtra, autoLoa
           {ordered.map((g) => (
             <ParamGroup key={g.key} uid48={uid48} group={g} />
           ))}
+          {!anyVisible && <EmptyState icon={Search} size="sm" title={t('core.param.noMatch')} description={t('core.param.noMatchHint')} />}
         </div>
         <div className={cx('cy-paramform__footer', (dirtyKeys.length > 0 || dev.flags.unsaved) && 'is-active')}>
           <span className="cy-paramform__status">

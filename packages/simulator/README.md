@@ -113,7 +113,8 @@ same rules and `test/integration/c-node.test.ts` checks both give the same repli
   `SELF_TEST`) answer `DENIED`; in ESTOP `REBOOT`/`ENTER_BOOTLOADER` too. `ENTER_BOOTLOADER`
   needs `arg = ENTER_BOOTLOADER_INTENT | uid16` (`INVALID_ARG` otherwise); a running app ignores
   the recovery beacon silently. ESTOP wins over a CLEAR_ESTOP of the same ms (`DENIED`) and ends a
-  running long command with `FAILED`; a repeated long command answers `IN_PROGRESS`, others `DENIED`.
+  running long command with `FAILED`; a neutral CTRL (and any other neutral-forcing event) ends a running
+  catalog `movesActuator` command with `FAILED` as well (PROTOCOL §4.5, same as the C library); a repeated long command answers `IN_PROGRESS`, others `DENIED`.
 - ASSIGN_ID: a persistent one is ignored while driving; a new number on an active board forces
   neutral and stops its stream. Warnings are not sticky (CAN_ERR is, and is a warning).
 - Stream: classic mode sends at most 4 slots; an unknown sid keeps its slot and streams NaN.

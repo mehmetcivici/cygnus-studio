@@ -120,6 +120,21 @@ export class CyCanControl implements DeviceControl {
   }
 
   /**
+   * Neutral on every frame that has a neutral command, session or not: the way to cancel a
+   * running moving command (PROTOCOL §4.5). Ending a session already sends its frames' neutrals.
+   */
+  neutralAll(): void {
+    const sent = new Set(this.session.keys());
+    this.end('stopped');
+    if (!this.dev.ctx.isOpen()) return;
+    for (const def of this.dev.def?.controls ?? []) {
+      if (sent.has(def.key)) continue;
+      const n = this.neutral(def, this.dev.address);
+      if (n) this.dev.send(n);
+    }
+  }
+
+  /**
    * Ends the session for `reason`. A neutral command follows unless the reason makes sending
    * pointless; `neutralTo` overrides the address (the old one after a number change).
    */

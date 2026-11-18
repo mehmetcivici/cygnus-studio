@@ -34,6 +34,18 @@ export interface ChartMarker {
   dashed?: boolean;
 }
 
+/** Horizontal reference line at a y value (0 dB, −180°, a limit). */
+export interface ChartGuide {
+  y: number;
+  /** Which y axis the value belongs to (default `left`). */
+  axis?: 'left' | 'right';
+  /** Token name or CSS color; default the axis color. */
+  color?: string;
+  dashed?: boolean;
+  /** Short tag drawn at the right end. */
+  label?: string;
+}
+
 export interface StaticChartProps {
   /**
    * Series may have different x arrays (e.g. overlaid tuner runs, each starting
@@ -53,6 +65,8 @@ export interface StaticChartProps {
   xScale?: 'linear' | 'log';
   /** Vertical cursor/marker lines. Pass a stable array (memoised). */
   markers?: readonly ChartMarker[];
+  /** Horizontal reference lines. Pass a stable array (memoised). */
+  guides?: readonly ChartGuide[];
   /**
    * Click (without dragging) on the plot: x value under the pointer. Use it to place cursors:
    * `onPick={(x, e) => (e.shiftKey ? setB(x) : setA(x))}`.
@@ -94,6 +108,34 @@ function extent(series: readonly StaticSeries[], log = false): [number, number] 
 /** Zoom/pan coordinates: linear, or log10 for a log axis (so a wheel step is the same in every decade). */
 const fwd = (log: boolean, v: number): number => (log ? Math.log10(v) : v);
 const inv = (log: boolean, v: number): number => (log ? 10 ** v : v);
+
+function drawGuides(u: uPlot, guides: readonly ChartGuide[] | undefined): void {
+  if (!guides?.length) return;
+  const ctx = u.ctx;
+  const dpr = uPlot.pxRatio;
+  const { left, top, width, height } = u.bbox;
+  ctx.save();
+  ctx.lineWidth = 1.25 * dpr;
+  ctx.font = `700 ${10.5 * dpr}px Lato, sans-serif`;
+  ctx.textBaseline = 'bottom';
+  ctx.textAlign = 'right';
+  for (const g of guides) {
+    const scale = g.axis === 'right' ? 'y2' : 'y';
+    if (!u.scales[scale]) continue;
+    const y = u.valToPos(g.y, scale, true);
+    if (!Number.isFinite(y) || y < top || y > top + height) continue;
+    const color = resolveColor(g.color ?? 'chart-axis');
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.setLineDash(g.dashed ? [4 * dpr, 3 * dpr] : []);
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(left + width, y);
+    ctx.stroke();
+    if (g.label) ctx.fillText(g.label, left + width - 4 * dpr, y - 2 * dpr);
+  }
+  ctx.restore();
+}
 
 function drawMarkers(u: uPlot, markers: readonly ChartMarker[] | undefined): void {
   if (!markers?.length) return;
@@ -140,6 +182,7 @@ export function StaticChart({
   xUnit = 's',
   xScale = 'linear',
   markers,
+  guides,
   onPick,
   className,
 }: StaticChartProps) {
@@ -148,6 +191,8 @@ export function StaticChart({
   xUnitRef.current = xUnit;
   const markersRef = useRef(markers);
   markersRef.current = markers;
+  const guidesRef = useRef(guides);
+  guidesRef.current = guides;
   const pickRef = useRef(onPick);
   pickRef.current = onPick;
   const { t, lang } = useI18n();
@@ -210,7 +255,10 @@ export function StaticChart({
         const left = u.cursor.left ?? -1;
         writeLegend(left >= 0 ? u.posToVal(left, 'x') : null);
       },
-      onDraw: (u) => drawMarkers(u, markersRef.current),
+      onDraw: (u) => {
+        drawGuides(u, guidesRef.current);
+        drawMarkers(u, markersRef.current);
+      },
     });
     const u = new uPlot(opts, alignData(ss), el);
     uRef.current = u;
@@ -269,7 +317,7 @@ export function StaticChart({
   // Markers change without rebuilding the plot.
   useEffect(() => {
     uRef.current?.redraw(false, false);
-  }, [markers]);
+  }, [markers, guides]);
 
   const toggle = useCallback((key: string) => {
     setHidden((prev) => {

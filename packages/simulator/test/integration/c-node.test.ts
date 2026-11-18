@@ -327,6 +327,19 @@ describe('host ↔ C library (cycan-bridge)', () => {
     expect(d.flags.warning).toBe(true);
   });
 
+  it.skipIf(!HAVE_BRIDGE)('abortAction(): a neutral CTRL cancels a running moving command with FAILED (PROTOCOL §4.5)', async () => {
+    const r = await cRig();
+    const d = await r.board();
+    const p = d.command('measure_motor');
+    await r.runFor(100);
+    d.abortAction();
+    expect(await r.caught(p, 200)).toMatchObject({ code: 'REJECTED', status: 5 });
+    expect(r.bridge.events).toContain('N ABORT');
+    await r.runFor(600);
+    expect(d.flags.enabled).toBe(false);
+    await r.settle(d.command(Command.SELF_TEST));
+  });
+
   it.skipIf(!HAVE_BRIDGE)('ESTOP latches; CLEAR_ESTOP releases it', async () => {
     const r = await cRig();
     const d = await r.board();
@@ -437,6 +450,12 @@ function script(): Step[] {
   add('clear estop', cmd(Command.CLEAR_ESTOP));
   add('clear faults', cmd(Command.CLEAR_FAULTS));
   add('fault req after clear', encodeFaultReq(ESC));
+  // PROTOCOL §4.5: a neutral CTRL cancels a running moving command, so does the CTRL timeout.
+  add('measure motor', cmd(0x41));
+  add('neutral cancels the moving command', neutral);
+  add('measure motor again', cmd(0x41));
+  at += 400;
+  add('fault req after the timeout cancelled it', encodeFaultReq(ESC));
   add('recovery beacon to a running app', encodeCommand(BROADCAST_ALL, { cmd: Command.ENTER_BOOTLOADER, arg: RECOVERY_STAY_MAGIC }));
   add('enter bootloader', cmd(Command.ENTER_BOOTLOADER, (ENTER_BOOTLOADER_INTENT | UID.uid16) >>> 0));
   at += 300;

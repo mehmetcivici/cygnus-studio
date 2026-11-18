@@ -255,6 +255,46 @@ describe('ESC actions', () => {
     expect(esc.params.getKey('motor.resistance_ohm')).toBeCloseTo(0.114, 1);
   });
 
+  it('a neutral CTRL cancels a running moving action with FAILED (PROTOCOL §4.5)', () => {
+    const { host, esc } = bench();
+    const r = host.ask(encodeCommand(A, { cmd: 0x41, arg: 0 }), 'commandRsp', 600);
+    expect(r.map((x) => x.status)).toEqual([1]);
+    expect(Math.abs(esc.signalValues().velocity!)).toBeGreaterThan(100);
+    const kv = esc.params.getKey('motor.kv_rpm_per_v');
+    const cut = host.ask(encodeCtrlSet(A, { mode: EscMode.OFF, flags: 0, value: 0 }), 'commandRsp', 2);
+    expect(cut.map((x) => [x.cmd, x.status])).toEqual([[0x41, 5]]);
+    host.clear();
+    host.run(1200);
+    // No late OK, the motor coasts down, nothing was written.
+    expect(host.of('commandRsp')).toEqual([]);
+    expect(esc.isEnabled()).toBe(false);
+    expect(Math.abs(esc.signalValues()['motor.voltage'] ?? 0)).toBeLessThan(0.01);
+    expect(esc.params.getKey('motor.kv_rpm_per_v')).toBe(kv);
+  });
+
+  it('the CTRL timeout ends a moving action with FAILED instead of leaving it hung', () => {
+    const { host, esc } = bench();
+    host.arm(A); // watchdog running
+    host.run(5);
+    const r = host.ask(encodeCommand(A, { cmd: 0x40, arg: 0 }), 'commandRsp', 400);
+    expect(r.map((x) => x.status)).toEqual([1, 5]);
+    expect(esc.isEnabled()).toBe(false);
+    // Nothing left pending: the next command runs.
+    expect(host.ask(encodeCommand(A, { cmd: 0x43, arg: 0 }), 'commandRsp', 2)[0]!.status).toBe(0);
+  });
+
+  it('the self test is not cancelled by neutral CTRL', () => {
+    const { host } = bench();
+    host.arm(A);
+    host.run(5);
+    const r = host.ask(encodeCommand(A, { cmd: Command.SELF_TEST, arg: 0 }), 'commandRsp', 5);
+    expect(r[0]!.status).toBe(1);
+    host.clear();
+    host.arm(A);
+    host.run(2);
+    expect(host.of('commandRsp')).toEqual([]);
+  });
+
   it('set position re-zeroes the reported position', () => {
     const { host, esc } = bench();
     drive(host, esc, EscMode.DUTY, 0.3, 500);

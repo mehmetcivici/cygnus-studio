@@ -1,8 +1,16 @@
+import { toast } from '../../ui';
+import { IS_DEMO } from '../demo/demo';
+import { tCore } from '../messages';
 /**
  * Save/open through the browser primitives (anchor download, hidden file input). Both work in
  * Chromium, Firefox, Safari and the Tauri webview without extra permissions or plugins.
  */
-export function downloadFile(name: string, data: string | Uint8Array | Blob, mime = 'application/octet-stream'): void {
+export function downloadFile(name: string, data: string | Uint8Array | Blob, mime = 'application/octet-stream'): boolean {
+  if (IS_DEMO) {
+    // The sandboxed demo frame refuses page-initiated downloads: say so instead of doing nothing.
+    toast.info(tCore('demo.noDownload'), { id: 'demo-no-download', description: name });
+    return false;
+  }
   const blob = data instanceof Blob ? data : new Blob([typeof data === 'string' ? data : new Uint8Array(data)], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -15,6 +23,7 @@ export function downloadFile(name: string, data: string | Uint8Array | Blob, mim
   a.remove();
   // Revoking immediately can cancel the download in some engines.
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return true;
 }
 
 /**

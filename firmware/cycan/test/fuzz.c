@@ -68,11 +68,13 @@ static void a_neutral(cycan_node_t *n, cycan_neutral_reason_t r)
     cycan_set_enabled(n, false);
 }
 
+static const uint8_t k_moving[] = CYCAN_ESC20A_MOVING_CMDS;
+
 static const cycan_app_t k_app = {
     CYCAN_MODEL_ESC20A, CYCAN_ESC20A_DEVTYPE, 3, 1, 2, 3, CYCAN_ESC20A_CATALOG_REV, 2, 0, 0, false,
     true, CYCAN_ESC20A_STREAM_MIN_PERIOD_US, CYCAN_ESC20A_STATUS_FRAME_COUNT,
     k_params, (uint16_t)(sizeof k_params / sizeof k_params[0]),
-    a_status, a_sig, a_ctrl, a_cmd, a_neutral, NULL,
+    a_status, a_sig, a_ctrl, a_cmd, a_neutral, NULL, k_moving, (uint8_t)sizeof k_moving,
 };
 
 static const uint8_t k_classes[] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1B, 0x05, 0x3F};

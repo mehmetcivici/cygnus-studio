@@ -464,10 +464,9 @@
   font-size: var(--cy-fs-sm);
   font-weight: 700;
 }
-.tuner-bode__svg svg {
-  display: block;
-  width: 100%;
-  height: auto;
+.tuner-bode__chart {
+  flex: 1 1 0;
+  min-height: 200px;
 }
 
 /* ---------- right ---------- */

@@ -89,8 +89,11 @@ export function RecoveryDialog({ onClose }: { onClose: () => void }) {
   const running = useFwUpdate((s) => s.running);
   const [active, setActive] = useState(() => bus?.recovery.active ?? false);
   const [flashed, setFlashed] = useState<Set<string>>(() => new Set());
-  const [finished, setFinished] = useState(false);
+  const [finishedByUser, setFinished] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  // Every waiting board was flashed and the beacon has stopped: nothing left to restart, so the
+  // dialog is done (instead of offering "restart 0 boards" next to "Cancel").
+  const finished = finishedByUser || (flashed.size > 0 && !active && !running && waiting.every((d) => flashed.has(d.uid48)));
   const step = recoveryStep(active, waiting.length, running, finished);
   useBusyLock(active ? 'firmware.busy.recovery' : null);
 

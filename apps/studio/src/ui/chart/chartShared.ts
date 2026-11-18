@@ -22,6 +22,8 @@ export interface ChartSeriesStyle {
   dash?: number[];
   /** Initial visibility (default true). The legend toggles it afterwards. */
   visible?: boolean;
+  /** Draw a dot at every sample (sparse measured points, e.g. a Bode plant estimate). */
+  points?: boolean;
 }
 
 /** Y-scale: automatic (padded, snapped to nice values) or fixed limits. */
@@ -61,11 +63,24 @@ export const TICK_INCRS: number[] = (() => {
   return out;
 })();
 
+/**
+ * Labels for log-axis ticks. uPlot puts a tick at every 1…9 × 10ⁿ; only 1·2·5 × 10ⁿ get a label
+ * (only 10ⁿ when decades are packed tighter than `minDecadePx`), the rest stay as bare grid lines.
+ * Digits come from each value itself: a log axis has no constant step.
+ */
+export function logTickLabels(splits: readonly number[], suffix: string, lang: 'tr' | 'en', decadePx = Infinity, minDecadePx = 150): string[] {
+  const keep = decadePx >= minDecadePx ? [1, 2, 5] : [1];
+  return splits.map((v) => {
+    if (!(v > 0) || !Number.isFinite(v)) return '';
+    const e = Math.floor(Math.log10(v) + 1e-9);
+    const m = Math.round((v / 10 ** e) * 1000) / 1000;
+    return keep.includes(m) ? `${logTickLabel(v, lang)}${suffix}` : '';
+  });
+}
+
 /** Label for a log-axis tick: significant digits instead of a fixed step. */
 function logTickLabel(v: number, lang: 'tr' | 'en'): string {
-  const a = Math.abs(v);
-  const d = a >= 100 ? 0 : a >= 1 ? (Number.isInteger(v) ? 0 : 1) : Math.min(6, Math.ceil(-Math.log10(a)) + 1);
-  return fmtNumber(v, d, { lang, grouping: false });
+  return fmtNumber(v, tickDigits(Math.abs(v)), { lang, grouping: false });
 }
 
 function yRange(scale: ChartScale): uPlot.Range.Function {
@@ -118,7 +133,23 @@ export function buildOptions(o: BuildOptions): uPlot.Options {
   };
 
   const axes: uPlot.Axis[] = [
-    { ...baseAxis, scale: 'x', values: fmtTicks(o.xUnit ? ` ${o.xUnit}` : ''), size: 28, space: 70 },
+    o.xLog
+      ? {
+          ...baseAxis,
+          scale: 'x',
+          values: (u: uPlot, splits: number[]): string[] => {
+            const min = u.scales.x?.min ?? 1;
+            const max = u.scales.x?.max ?? 10;
+            const decades = Math.max(1e-6, Math.log10(Math.max(max, 1e-12) / Math.max(min, 1e-12)));
+            return logTickLabels(splits, o.xUnit ? ` ${o.xUnit}` : '', currentLang(), Math.max(u.over?.clientWidth ?? 0, u.width - 70) / decades);
+          },
+          // uPlot's own log filter measures 9→10 as a y axis would (negative on x) and keeps only
+          // decades; the labels above do the 1·2·5 selection instead.
+          filter: (_u: uPlot, splits: number[]): number[] => splits,
+          size: 28,
+          space: 12,
+        }
+      : { ...baseAxis, scale: 'x', values: fmtTicks(o.xUnit ? ` ${o.xUnit}` : ''), size: 28, space: 70 },
     {
       ...baseAxis,
       scale: 'y',
@@ -194,7 +225,7 @@ export function buildOptions(o: BuildOptions): uPlot.Options {
         width: s.width ?? 1.5,
         dash: s.dash,
         spanGaps: true,
-        points: { show: false },
+        points: s.points ? { show: true, size: 5, width: 1, fill: resolvedSeriesColor(s, i) } : { show: false },
         show: s.visible !== false,
       })),
     ],

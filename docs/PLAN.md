@@ -18,25 +18,29 @@ Sunum takvimindeki karşılığı: bu çalışma **Alfa** hedefini (Şub–Nis 2
 | U0, A1 | Arayüz temeli, uygulama çekirdeği, Hat ekranı | Tamam |
 | A2–A6 | Tuner, Cihaz, Araç, Grafik, CAN İzleyici, Firmware, Proje ekranları | Tamam |
 | Q1 | Bağımsız inceleme (4 ajan, 86 bulgu, 5 kritik) | Tamam (raporlar oturumda: protokol, host-sim, uygulama, tasarim) |
-| Q2 | Düzeltme turu | **Sürüyor**: C kütüphanesi tamam; host, simülatör, çekirdek, ekranlar düzeltiliyor |
-| D1 | Canlı demo yayını, GitHub'a gönderim | **Yapılmadı** (repo bekleniyor) |
+| Q2 | Düzeltme turu | Tamam (6 ajan, dizin bazında) |
+| Q3 | Uzlaştırma ve bağımsız doğrulama | Tamam: bulguların yeniden üretimi, emniyet turu, kullanıcı yürüyüşü, çevrimiçi demo (sandbox) — ayrıntı oturumdaki `review/dogrulama.md` |
+| D1 | Canlı demo yayını, GitHub'a gönderim | **Yapılmadı** (repo bekleniyor); tek dosyalı demo `npm run build:demo` korumalı iframe'de doğrulandı |
 
-Son doğrulama (2026-11-18): `npm run typecheck` temiz · 784 TypeScript testi · C kütüphanesi 31 test · `cygnus-link` 8 test · arayüz derlemesi hatasız.
+Son doğrulama (2026-11-19): `npm run typecheck` temiz · 964 TypeScript testi · C kütüphanesi 47 test + fuzz (200 000 çerçeve) · `cygnus-link` 11 + kabuk 3 Rust testi, `cargo clippy -D warnings` temiz · arayüz ve demo derlemesi hatasız.
 
-## Açık işler (düzeltme turu)
+## Açık işler
 
-1. Açılışta `state = BOOT` heartbeat'i (PROTOCOL §4.1) kodda yok: simülatör, C kütüphanesi ve host'a eklenecek; host önbelleği buna göre geçersiz kılacak.
-2. Protokole `COMMAND LOAD_SAVED` (kalıcı bellekten yeniden yükle) eklenecek; Cihaz ekranındaki "kayıtlıya dön" buna bağlanacak.
-3. Host firmware güncellemesi: `ENTER_BOOTLOADER` yeniden denemesi; son ACK kaybında heartbeat sürümünden doğrulama (şu an arayüz katmanı örtüyor).
-4. Çekirdek `paramCache`: kart yeniden başlarken/kayıpken parametre okumasın.
-5. Kabuk: firmware güncellemesi sırasında gezinme/bağlantı kesme kilidi; durum çubuğunda firmware yuvası.
-6. Kaydedici: yüksek hız (akış) örnekleri kayda girsin.
-7. Bağlantı yöneticisi: senaryo seçenekleri (`assigned: false`); Araç ekranı şu an `factoryReset` ile dolanıyor.
-8. Araç şeması: swerve modül simgeleri üst üste biniyor; dar şablonlar (kol, Ackermann) küçük.
-9. Tuner: sistem tanıma τ/θ ayrımı bazen karışıyor; katalogda açık döngü kipi açıkça işaretlenmeli; `StaticChart`'a logaritmik eksen.
-10. CAN İzleyici 25 kartlı hatta ölçülmedi; Cihaz ekranında bootloader ve bilinmeyen model durumları denenmedi.
-11. Eski Cyncoder `SET_CONFIG` yükü: `can_handler.h` / `backend/can_protocol.py` gerekli.
-12. Host kütüphaneleri (Gemstone/Pixhawk/Arduino) yazılmadı.
+1. Tuner sistem tanıma: ileri besleme koşusundan tanımada ölü zaman (θ) çoğu zaman 0 çıkıyor; τ/θ ayrımı açık döngü basamağıyla daha güvenilir.
+2. Eski Cyncoder `SET_CONFIG` yükü (CAN numarası değiştirme): `can_handler.h` / `backend/can_protocol.py` gerekli.
+3. Dokunma hedefleri: `--cy-h-sm` 28 px (öneri 32 px); eldivenle kullanım için "pit kipi" yok.
+4. Kalabalık hatta (62 kart) zaman aşımına uğrayan kartın "kayıp" yerine "yanıt gecikiyor" gösterilmesi doğrulanmadı.
+5. Kart nötre döndükten sonra `CTRL_TIMEOUT` uyarısı her sürüş sonunda "Uyarı" rozeti bırakıyor (protokole uygun, ama kullanıcıya gürültü).
+6. Simülatör farklı senaryolarda aynı uid48'leri üretebiliyor; projede kayıtlı Grafik düzeni başka senaryoda başka modele bağlanıp ham sinyal anahtarı gösteriyor.
+7. Tauri penceresi, paketleme ve GitHub Actions gerçek ortamda denenmedi; STM32 örneği gerçek HAL ile derlenmedi.
+
+## Yol haritası
+
+- **FRC tarzı ENABLE sinyali** (yayın, ≥10 Hz, sayaçlı; eyleyici yalnız son 100 ms'de görmüşse sürer): değerlendirildi, v1'e alınmadı. v1'de ESTOP mandalı (3 kez gönderim, ESTOP'ta REBOOT reddi) + CTRL bekçisi + nötrden başlama kuralı kullanılıyor.
+- **`.cyfw` Ed25519 imza doğrulaması**: biçimde yer ayrıldı (başlık `flags` bit0 + gövde sonrası 64 bayt); v1 bootloader doğrulamıyor.
+- **Heartbeat'te açılış sayacı**: kısa kesintiyi BOOT heartbeat'i kaçırılsa da ayırt etmek için.
+- **Host kütüphaneleri**: Gemstone, Pixhawk (ArduPilot), Arduino.
+- **Eski Cyncoder SET_CONFIG**: numara değiştirme ve yapılandırma yazma.
 
 ## Donanım geldiğinde yapılacaklar
 

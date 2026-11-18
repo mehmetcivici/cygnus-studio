@@ -156,7 +156,7 @@ Uzun işlemler önce `IN_PROGRESS`, bitince `OK/FAILED` + `result` yollar. `SELF
 `LOAD_DEFAULTS` yalnızca RAM'i değiştirir (NUM ve ad korunur); kalıcı olması için `SAVE_PARAMS` gerekir.
 `LOAD_SAVED` kalıcı bellekteki parametreleri RAM'e geri yükler (kaydedilmemiş değişiklikleri atar).
 Eyleyici sürülürken (`ENABLED`) `REBOOT`, `ENTER_BOOTLOADER`, `SAVE_PARAMS`, `LOAD_DEFAULTS` ve `LOAD_SAVED` `DENIED` döner. `state = ESTOP` iken `REBOOT` ve `ENTER_BOOTLOADER` de `DENIED` döner (kilit yalnız `CLEAR_ESTOP` veya güç kesmeyle kalkar).
-`ENTER_BOOTLOADER` kasıt değeri ister: `arg = 0xB0070000 | uid16`; aksi halde `INVALID_ARG`. Uzun bir komut sürerken ESTOP gelirse komut `FAILED` ile biter. Eyleyiciyi hareket ettiren uzun komutlar (katalogda `movesActuator`) ayrıca karta gelen bir nötr CTRL ile iptal edilir (`FAILED`); host bu komutları yalnız sürüş oturumu içinde gönderir.
+`ENTER_BOOTLOADER` kasıt değeri ister: `arg = 0xB0070000 | uid16`; aksi halde `INVALID_ARG`. Uzun bir komut sürerken ESTOP gelirse komut `FAILED` ile biter. Eyleyiciyi hareket ettiren uzun komutlar (katalogda `movesActuator`) ayrıca karta gelen bir nötr CTRL ile ve kartı nötre zorlayan her olayla (CTRL zaman aşımı, hata, ESTOP) iptal edilir (`FAILED`); host bu komutları yalnız sürüş oturumu içinde gönderir.
 
 ### 4.6 FAULT_REQ (SYS_REQ/6) → FAULT_RSP (SYS_RSP/6) `[active u16] [sticky u16] [warn u16] [0 0]`
 

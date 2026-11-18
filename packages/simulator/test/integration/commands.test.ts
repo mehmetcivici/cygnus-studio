@@ -53,6 +53,27 @@ describe('host ↔ simulator: commands and faults', () => {
     loop.stop();
   });
 
+  it('abortAction() cancels a running moving command: FAILED, motor stops, nothing written (PROTOCOL §4.5)', async () => {
+    const sim = createScenario('all.devices');
+    const r = await connect(sim);
+    await r.discover();
+    const esc = r.dev('esc20a');
+    const node = sim.node('esc20a') as EscNode;
+    const kv = node.params.getKey('motor.kv_rpm_per_v');
+    const p = esc.command('measure_motor');
+    await r.runFor(600);
+    expect(node.isEnabled()).toBe(true);
+    esc.abortAction();
+    const e = await r.caught(p, 200);
+    expect(e).toMatchObject({ code: 'REJECTED', status: CommandStatus.FAILED });
+    await r.runFor(5);
+    expect(node.isEnabled()).toBe(false);
+    await r.runFor(1500);
+    expect(node.params.getKey('motor.kv_rpm_per_v')).toBe(kv);
+    // Nothing left pending on the board.
+    await r.settle(esc.command('set_position', 0));
+  });
+
   it('self-test passes, and fails with catalog labels when injected', async () => {
     const sim = createScenario('all.devices');
     const r = await connect(sim);

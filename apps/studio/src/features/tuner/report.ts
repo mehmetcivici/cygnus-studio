@@ -38,6 +38,12 @@ export function buildReport(r: ReportInput): string {
   const esc = escapeHtml;
   const num = (v: unknown): number => (typeof v === 'number' ? v : NaN);
   const n = (v: unknown, d: number): string => esc(fmtNumber(num(v), d, { lang: L, grouping: false }));
+  // Integral errors span decades: three significant digits, as on the Metrics tab.
+  const sig3 = (v: unknown): string => {
+    const x = num(v);
+    if (!Number.isFinite(x) || x === 0) return n(x, 0);
+    return n(Number(x.toPrecision(3)), Math.max(0, Math.min(6, 2 - Math.floor(Math.log10(Math.abs(x))))));
+  };
   const fv = (v: unknown, u: string, d: number): string => esc(fmtValue(num(v), u, d, { lang: L }));
   // Time metrics of a response that never reached the target are not shown (see gradeStep).
   const ok = (m: StepMetrics): boolean => !m.noResponse && m.steadyErrorPct < NOT_REACHED_PCT;
@@ -94,7 +100,7 @@ export function buildReport(r: ReportInput): string {
     for (const x of closed) {
       const m = headline(x)!;
       parts.push(
-        `<tr class="${x === best ? 'best' : ''}"><td>${tag(x)}${x === best ? ' ★' : ''}</td>${pid.map((g) => `<td>${n(x.gains[g], 5)}</td>`).join('')}<td>${tm(m, fv(m.riseTime, 's', 3))}</td><td>${tm(m, fv(m.overshoot, '%', 1))}</td><td>${tm(m, Number.isNaN(m.settlingTime) ? esc(tr('metrics.notSettled')) : fv(m.settlingTime, 's', 3))}</td><td>${fv(m.steadyErrorPct, '%', 2)}</td><td>${tm(m, n(m.iae, 4))}</td><td>${tm(m, n(m.damping, 2))}</td><td>${fv(m.saturation, '%', 0)}</td></tr>`,
+        `<tr class="${x === best ? 'best' : ''}"><td>${tag(x)}${x === best ? ' ★' : ''}</td>${pid.map((g) => `<td>${n(x.gains[g], 5)}</td>`).join('')}<td>${tm(m, fv(m.riseTime, 's', 3))}</td><td>${tm(m, fv(m.overshoot, '%', 1))}</td><td>${tm(m, Number.isNaN(m.settlingTime) ? esc(tr('metrics.notSettled')) : fv(m.settlingTime, 's', 3))}</td><td>${fv(m.steadyErrorPct, '%', 2)}</td><td>${tm(m, sig3(m.iae))}</td><td>${tm(m, n(m.damping, 2))}</td><td>${fv(m.saturation, '%', 0)}</td></tr>`,
       );
     }
     parts.push('</tbody></table>');
@@ -139,7 +145,7 @@ export function buildReport(r: ReportInput): string {
         [tr('m.overshoot'), tm(m, fv(m.overshoot, '%', 1))],
         [tr('m.settlingTime'), tm(m, Number.isNaN(m.settlingTime) ? esc(tr('metrics.notSettled')) : fv(m.settlingTime, 's', 3))],
         [tr('m.steadyError'), `${fv(m.steadyError, x.unit, 4)} (${fv(m.steadyErrorPct, '%', 2)})`],
-        ['IAE / ITAE', tm(m, `${n(m.iae, 4)} / ${n(m.itae, 4)}`)],
+        ['IAE / ITAE', tm(m, `${sig3(m.iae)} ${esc(x.unit)}·s / ${sig3(m.itae)} ${esc(x.unit)}·s²`)],
         [tr('m.damping'), tm(m, n(m.damping, 2))],
         [tr('m.saturation'), fv(m.saturation, '%', 1)],
         [tr('m.noiseRms'), fv(m.noiseRms, x.unit, 4)],

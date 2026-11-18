@@ -350,6 +350,10 @@ export abstract class SimNode implements BusEndpoint {
   }
   /** Actuator outputs to neutral (ESTOP, timeout, fault, conflict, renumbering). */
   protected neutral(): void {}
+  /** A running model action was cancelled (PROTOCOL §4.5); outputs must end up neutral. */
+  protected onActionAbort(_cmd: number): void {
+    this.neutral();
+  }
   /** Frames other boards send (STATUS, HEARTBEAT…), for boards that listen to peers. */
   protected onPeerFrame(_f: BusFrame): void {}
   protected readonly listensToPeers: boolean = false;
@@ -425,6 +429,7 @@ export abstract class SimNode implements BusEndpoint {
   private forceNeutral(): void {
     this.ctrlArmed = 0;
     this.ctrlSeen = false;
+    this.failMovingCommand();
     if (this.inNeutral) return;
     this.inNeutral = true; // neutral() may raise a fault, which lands here again
     this.neutral();
@@ -742,7 +747,10 @@ export abstract class SimNode implements BusEndpoint {
     // Only valid frames feed the watchdog; a drive command before the neutral one is ignored.
     if (r === CtrlResult.INVALID || (r === CtrlResult.DRIVE && !armed)) return;
     if (!this.ctrlAllowed) return; // applying it raised a fault
-    if (r === CtrlResult.NEUTRAL) this.ctrlArmed |= bit;
+    if (r === CtrlResult.NEUTRAL) {
+      this.ctrlArmed |= bit;
+      this.abortMovingCommand();
+    }
     this.lastCtrlMs = this.now;
     this.ctrlSeen = true;
     if (this.faultWarn & (1 << FaultBit.CTRL_TIMEOUT)) this.setWarn(FaultBit.CTRL_TIMEOUT, false);
@@ -865,6 +873,27 @@ export abstract class SimNode implements BusEndpoint {
     }
     // PROTOCOL §4.5: a long command running when ESTOP arrives ends with FAILED.
     if (pending >= 0) this.respond(pending, CommandStatus.FAILED, 0);
+  }
+
+  /**
+   * PROTOCOL §4.5: a neutral CTRL reaching the board cancels a running long command that moves
+   * the mechanism (catalog `movesActuator`); it ends with FAILED. This is the host's abort path.
+   */
+  private abortMovingCommand(): void {
+    const cmd = this.longCmd;
+    if (this.failMovingCommand()) this.onActionAbort(cmd);
+  }
+
+  /**
+   * Ends a running moving command with FAILED (neutral CTRL or any event that forces the board
+   * neutral; same as the C library). Silent while unassigned or in conflict. True if one ran.
+   */
+  private failMovingCommand(): boolean {
+    const cmd = this.longCmd;
+    if (cmd < 0 || !this.def.actions.some((a) => a.cmd === cmd && a.movesActuator === true)) return false;
+    this.longCmd = -1;
+    if (this.assigned) this.respond(cmd, CommandStatus.FAILED, 0);
+    return true;
   }
 
   // ---- ENUM / INFO -----------------------------------------------------------------------

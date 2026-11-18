@@ -38,6 +38,31 @@ static uint32_t rnd(cycan_node_t *n)
     return (uint32_t)n->uid.uid48 ^ (n->now * 2654435761ul);
 }
 
+static void send_command_rsp(cycan_node_t *n, uint8_t cmd, uint8_t status, uint32_t result);
+
+static void app_neutral(cycan_node_t *n, cycan_neutral_reason_t why)
+{
+    if (n->in_neutral || n->app->neutral == NULL) return;
+    n->in_neutral = true; /* neutral() may raise a fault, which would land here again */
+    n->app->neutral(n, why);
+    n->in_neutral = false;
+}
+
+/* PROTOCOL 4.5: a running command that moves the mechanism ends with FAILED when the board is
+ * forced neutral; the application stops it in its neutral() callback. Returns true if one was. */
+static bool fail_moving_cmd(cycan_node_t *n)
+{
+    uint8_t k;
+    if (!n->cmd_pending || n->app->moving_cmds == NULL) return false;
+    for (k = 0; k < n->app->moving_cmd_count; k++) {
+        if (n->app->moving_cmds[k] != n->cmd_code) continue;
+        n->cmd_pending = false;
+        if (!silent(n)) send_command_rsp(n, n->cmd_code, CYCAN_CMDST_FAILED, 0);
+        return true;
+    }
+    return false;
+}
+
 /* Every event that forces the board neutral also disarms CTRL: driving resumes only after a
  * fresh neutral command (PROTOCOL 7, neutral-first rule). */
 static void neutral(cycan_node_t *n, cycan_neutral_reason_t why)
@@ -45,10 +70,8 @@ static void neutral(cycan_node_t *n, cycan_neutral_reason_t why)
     n->ctrl_armed = 0;
     n->ctrl_watch = false;
     n->enabled = false;
-    if (n->in_neutral || n->app->neutral == NULL) return;
-    n->in_neutral = true; /* neutral() may raise a fault, which would land here again */
-    n->app->neutral(n, why);
-    n->in_neutral = false;
+    (void)fail_moving_cmd(n);
+    app_neutral(n, why);
 }
 
 static cycan_store_io_t store_io(const cycan_node_t *n)
@@ -629,7 +652,11 @@ static void on_ctrl(cycan_node_t *n, uint32_t id, uint8_t index, const uint8_t *
      * target alive. A drive command before the neutral one is ignored altogether. */
     if (r == CYCAN_CTRL_INVALID || (r == CYCAN_CTRL_DRIVE && !armed)) return;
     if (!cycan_ctrl_allowed(n)) return; /* the callback raised a fault */
-    if (r == CYCAN_CTRL_NEUTRAL) n->ctrl_armed |= bit;
+    if (r == CYCAN_CTRL_NEUTRAL) {
+        n->ctrl_armed |= bit;
+        /* PROTOCOL 4.5: the host's way to cancel a moving command. */
+        if (fail_moving_cmd(n)) app_neutral(n, CYCAN_NEUTRAL_ABORT);
+    }
     n->ctrl_watch = true;
     n->ctrl_last = n->now;
     cycan_fault_clear(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);

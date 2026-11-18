@@ -39,7 +39,7 @@ export function FileTab() {
     } else await doOpen();
   };
   const save = (): void => {
-    saveProjectToDisk();
+    if (!saveProjectToDisk()) return;
     markSaved();
     toast.success(tProject('file.saved'));
   };
@@ -55,7 +55,7 @@ export function FileTab() {
       const shape = sectionShape(v);
       return {
         id,
-        label: KNOWN_OWNERS.includes(owner) ? `${t(`project.sum.owner.${owner}`)} · ${id}` : id,
+        label: KNOWN_OWNERS.includes(owner) ? t(`project.sum.owner.${owner}`) : id,
         summary: shape.kind === 'list' ? tProject('sum.items', { count: shape.count }) : shape.kind === 'object' ? tProject('sum.keys', { count: shape.count }) : shape.count ? tProject('sum.value') : tProject('sum.none'),
         empty: shape.count === 0,
       };

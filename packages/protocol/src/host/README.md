@@ -57,6 +57,7 @@ await d.save(); await d.loadDefaults(); await d.rename('Sol ön itici');
 await d.loadSaved();                                // kayıtlı ayarları RAM'e geri yükler; önbellek düşer (paramsInvalidated)
 await d.reboot();                                   // önbellek ve INFO düşer; heartbeat dönünce yeniden okunur
 await d.command('measure_motor', 0, { onProgress: () => spin() });   // IN_PROGRESS → nihai sonuç
+d.abortAction();                                     // eyleyiciyi hareket ettiren uzun komutu (katalog movesActuator) iptal: nötr CTRL → kart FAILED (PROTOCOL §4.5)
 const st = await d.selfTest();                     // { passed, mask, failed: BitDef[] } (katalog etiketleri)
 await d.identify(5); await d.reboot(); await d.clearFaults(); await d.clearEstop(); await d.readFaults();
 ```

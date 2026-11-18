@@ -95,6 +95,8 @@ export function MotorTest({
 
   const answer = (a: TestAnswer): void => {
     setAsking(false);
+    // The answer is kept with the draft so the tune step shows it, whichever step ran the test.
+    if (a !== "otherWheel") draft.setVerified(slot.id, a === "ok");
     if (a === "reversed") {
       draft.setTweak(slot.id, { invert: invert ? undefined : true });
       toast.info(tVehicle("test.reversedDone"), { description: tVehicle("test.retryHint") });

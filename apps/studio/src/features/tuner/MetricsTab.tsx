@@ -92,7 +92,7 @@ export function MetricsTab() {
         {m && !reached && (
           <div className="tuner-hint tuner-hint--danger tuner-notreached" role="status">
             <TriangleAlert size={14} aria-hidden />
-            <span>{tTuner('metrics.notReached', { pct: fmtPercent(Math.min(100, 100 - m.steadyErrorPct), 0) })}</span>
+            <span>{tTuner('metrics.notReached', { pct: fmtPercent(Math.max(0, Math.min(100, 100 - m.steadyErrorPct)), 0) })}</span>
           </div>
         )}
         {m ? (

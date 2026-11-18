@@ -298,14 +298,17 @@ static uint8_t app_command(cycan_node_t *n, uint8_t cmd, uint32_t arg, uint32_t 
         if (!cycan_ctrl_allowed(n)) return CYCAN_CMDST_DENIED;
         g.cmd_running = true;
         g.cmd_done_at = g.now + 500000u;
+        cycan_set_enabled(n, true); /* the measurement drives the motor */
         return CYCAN_CMDST_IN_PROGRESS;
     }
     return CYCAN_CMDST_UNSUPPORTED;
 }
 
+static const uint8_t k_esc_moving[] = CYCAN_ESC20A_MOVING_CMDS;
+
 static void app_neutral(cycan_node_t *n, cycan_neutral_reason_t why)
 {
-    static const char *const k_why[] = {"CTRL_TIMEOUT", "ESTOP", "CONFLICT", "UNASSIGNED", "RESET", "FAULT"};
+    static const char *const k_why[] = {"CTRL_TIMEOUT", "ESTOP", "CONFLICT", "UNASSIGNED", "RESET", "FAULT", "ABORT"};
     (void)n;
     g.cmd_running = false; /* a running measurement is aborted with the actuator */
     printf("N %s\n", (unsigned)why < sizeof k_why / sizeof k_why[0] ? k_why[why] : "?");
@@ -441,6 +444,7 @@ static void poll_once(void)
         cycan_poll(&g.node, (uint32_t)g.now);
         if (g.cmd_running && g.now >= g.cmd_done_at && g.mode == MODE_APP) {
             g.cmd_running = false;
+            cycan_set_enabled(&g.node, false);
             cycan_command_finish(&g.node, CYCAN_ESC20A_CMD_MEASURE_MOTOR, CYCAN_CMDST_OK, 0);
         }
     } else if (g.mode == MODE_BOOT) {
@@ -629,6 +633,8 @@ int main(int argc, char **argv)
         g.app.param_count = (uint16_t)(sizeof k_esc_params / sizeof k_esc_params[0]);
         g.app.ctrl = app_ctrl;
         g.app.neutral = app_neutral;
+        g.app.moving_cmds = k_esc_moving;
+        g.app.moving_cmd_count = (uint8_t)sizeof k_esc_moving;
     } else {
         g.app.model = CYCAN_MODEL_CYNCODER;
         g.app.devtype = CYCAN_CYNCODER_DEVTYPE;

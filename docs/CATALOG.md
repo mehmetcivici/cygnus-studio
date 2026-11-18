@@ -517,7 +517,7 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 0x0110 | `fusion.mode` | Füzyon kipi | enum |  |  | 6 eksen | Füzyon ve kalibrasyon |  | 6 eksen yalnızca jiroskop ve ivmeölçeri, 9 eksen ayrıca manyetometreyi kullanır. Seçenekler: 0 6 eksen · 1 9 eksen (pusulalı). |
 | 0x0111 | `fusion.cal_on_boot` | Açılışta sapma kalibrasyonu | bool |  |  | açık | Füzyon ve kalibrasyon |  | Açılışta kart hareketsizken jiroskop sapmasını otomatik ölçer. |
 | 0x0112 | `fusion.cal_time_s` | Kalibrasyon süresi | f32 | s | 1 … 30 | 4 | Füzyon ve kalibrasyon |  | Sapma kalibrasyonunun sürdüğü zaman; uzun süre daha az kayma demektir. |
-| 0x0113 | `fusion.motion_dps` | Hareket algılama eşiği | f32 | dps | 0.1 … 20 | 2 | Füzyon ve kalibrasyon | gelişmiş | Kalibrasyon sırasında bu açısal hız aşılırsa kalibrasyon iptal edilir. |
+| 0x0113 | `fusion.motion_dps` | Hareket algılama eşiği | f32 | °/s | 0.1 … 20 | 2 | Füzyon ve kalibrasyon | gelişmiş | Kalibrasyon sırasında bu açısal hız aşılırsa kalibrasyon iptal edilir. |
 | 0x0114 | `fusion.yaw_invert` | Yaw yönünü çevir | bool |  |  | kapalı | Füzyon ve kalibrasyon |  | Saat yönünde dönüşün pozitif yaw sayılmasını sağlar. |
 | 0x0115 | `fusion.yaw_wrap` | Yaw biçimi | enum |  |  | Sürekli | Füzyon ve kalibrasyon |  | Yaw sürekli birikir mi yoksa −180..+180 aralığına mı sarılır. Seçenekler: 0 Sürekli · 1 −180 … +180. |
 | 0x0120 | `imu.gyro_range` | Jiroskop aralığı | enum |  |  | ±2000 dps | Sensör | yeniden başlatma | Ölçülebilecek en yüksek açısal hız; küçük aralık daha hassastır. Seçenekler: 250 ±250 dps · 500 ±500 dps · 1000 ±1000 dps · 2000 ±2000 dps. |
@@ -537,9 +537,9 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 1 | `yaw` | Yaw | ° | -180 … 180 | 2 |  |
 | 2 | `pitch` | Pitch | ° | -90 … 90 | 2 |  |
 | 3 | `roll` | Roll | ° | -180 … 180 | 2 |  |
-| 4 | `gyro.x` | Açısal hız X | dps | -2000 … 2000 | 1 |  |
-| 5 | `gyro.y` | Açısal hız Y | dps | -2000 … 2000 | 1 |  |
-| 6 | `gyro.z` | Açısal hız Z | dps | -2000 … 2000 | 1 |  |
+| 4 | `gyro.x` | Açısal hız X | °/s | -2000 … 2000 | 1 |  |
+| 5 | `gyro.y` | Açısal hız Y | °/s | -2000 … 2000 | 1 |  |
+| 6 | `gyro.z` | Açısal hız Z | °/s | -2000 … 2000 | 1 |  |
 | 7 | `accel.x` | İvme X | g | -16 … 16 | 3 |  |
 | 8 | `accel.y` | İvme Y | g | -16 … 16 | 3 |  |
 | 9 | `accel.z` | İvme Z | g | -16 … 16 | 3 |  |
@@ -548,7 +548,7 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 12 | `quat.y` | Kuaterniyon y |  | -1 … 1 | 4 |  |
 | 13 | `quat.z` | Kuaterniyon z |  | -1 … 1 | 4 |  |
 | 14 | `temp` | Sıcaklık | °C | 0 … 85 | 0 |  |
-| 15 | `cal.status` | Kalibrasyon durumu |  | 0 … 3 | 0 | 0 Kalibre edilmedi · 1 Kalibre ediliyor · 2 Kalibre · 3 Hareket nedeniyle başarısız |
+| 15 | `cal.status` | Kalibrasyon durumu |  | 0 … 3 | 0 | 0 Kalibre edilmedi · 1 Kalibre ediliyor · 2 Kalibre edildi · 3 Hareket nedeniyle başarısız |
 
 ### Durum çerçeveleri
 
@@ -564,9 +564,9 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
-| 0 |  | i16 | `gyro.x` | 0.1 |  | dps |
-| 2 |  | i16 | `gyro.y` | 0.1 |  | dps |
-| 4 |  | i16 | `gyro.z` | 0.1 |  | dps |
+| 0 |  | i16 | `gyro.x` | 0.1 |  | °/s |
+| 2 |  | i16 | `gyro.y` | 0.1 |  | °/s |
+| 4 |  | i16 | `gyro.z` | 0.1 |  | °/s |
 | 6 | 0..1 | u8 | `cal.status` | 1 |  |  |
 | 7 |  | i8 | `temp` | 1 |  | °C |
 

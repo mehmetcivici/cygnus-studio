@@ -12,6 +12,14 @@ export const tCore = registerMessages('core', {
         error: 'Bağlanamadı',
       },
     },
+    demo: {
+      noDownload: 'Bu çevrimiçi demoda dosya kaydetme kapalı; masaüstü sürümünde çalışır.',
+      noPrint: 'Bu çevrimiçi demoda yazdırma kapalı; masaüstü sürümünde çalışır. Rapor aşağıda önizleniyor.',
+      reportTitle: 'Rapor önizlemesi',
+      reportNote: 'Çevrimiçi demoda raporlar yeni pencerede açılamaz; burada önizlenir.',
+      noHardware: 'Bu çevrimiçi demoda donanım bağlantısı (seri port, roboRIO) kapalı. Simülatörü kullanın ya da masaüstü sürümünü indirin.',
+      noClipboard: 'Panoya kopyalanamadı (tarayıcı izin vermedi).',
+    },
     drive: {
       arm: 'Basılı tut: etkinleştir',
       holding: 'Tutmaya devam…',
@@ -79,6 +87,8 @@ export const tCore = registerMessages('core', {
       },
     },
     param: {
+      noMatch: 'Süzgece uyan ayar yok',
+      noMatchHint: 'Aramayı değiştirin ya da "Yalnız değişenler" / "Gelişmişleri göster" seçeneklerine bakın.',
       search: 'Parametre ara',
       onlyChanged: 'Yalnız değişenler',
       showAdvanced: 'Gelişmişleri göster',
@@ -174,6 +184,14 @@ export const tCore = registerMessages('core', {
         error: 'Could not connect',
       },
     },
+    demo: {
+      noDownload: 'Saving files is off in this online demo; it works in the desktop app.',
+      noPrint: 'Printing is off in this online demo; it works in the desktop app. The report is previewed below.',
+      reportTitle: 'Report preview',
+      reportNote: 'Reports cannot open in a new window in the online demo; they are previewed here.',
+      noHardware: 'Hardware connections (serial port, roboRIO) are off in this online demo. Use the simulator or get the desktop app.',
+      noClipboard: 'Could not copy to the clipboard (the browser refused).',
+    },
     drive: {
       arm: 'Hold to enable',
       holding: 'Keep holding…',
@@ -241,6 +259,8 @@ export const tCore = registerMessages('core', {
       },
     },
     param: {
+      noMatch: 'No setting matches the filter',
+      noMatchHint: 'Change the search, or check "Only changed" / "Show advanced".',
       search: 'Search parameters',
       onlyChanged: 'Only changed',
       showAdvanced: 'Show advanced',

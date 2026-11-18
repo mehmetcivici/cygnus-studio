@@ -46,6 +46,19 @@ function sameParams(a: NavParams, b: NavParams): boolean {
 }
 
 /**
+ * Mirrors the screen into the URL hash. Best effort: a sandboxed or opaque-origin frame (the
+ * online demo) may refuse history updates; the in-app navigation must not depend on it.
+ */
+function setHash(h: string, replace: boolean): void {
+  try {
+    if (replace) history.replaceState(null, '', h);
+    else location.hash = h;
+  } catch {
+    // URL stays behind; the store is the source of truth.
+  }
+}
+
+/**
  * Navigation store; the URL hash mirrors it (no router library). Services
  * that must react to page changes (e.g. stop actuation) can
  * `useNav.subscribe(...)`.
@@ -59,14 +72,14 @@ export const useNav = create<NavState>((set, get) => ({
       // Cancelled: undo a back/forward or hand-edited hash so the URL matches the screen.
       if (typeof location !== 'undefined') {
         const h = formatHash(cur.screen, cur.params);
-        if (location.hash !== h) history.replaceState(null, '', h);
+        if (location.hash !== h) setHash(h, true);
       }
       return;
     }
     set({ screen, params });
     if (typeof location !== 'undefined') {
       const h = formatHash(screen, params);
-      if (location.hash !== h) location.hash = h;
+      if (location.hash !== h) setHash(h, false);
     }
   },
 }));
@@ -82,6 +95,6 @@ export function initNavSync(): () => void {
     useNav.getState().navigate(screen, params);
   };
   window.addEventListener('hashchange', onHash);
-  if (!location.hash) history.replaceState(null, '', formatHash(useNav.getState().screen, useNav.getState().params));
+  if (!location.hash) setHash(formatHash(useNav.getState().screen, useNav.getState().params), true);
   return () => window.removeEventListener('hashchange', onHash);
 }

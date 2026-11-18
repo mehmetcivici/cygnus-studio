@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Cable, PlugZap, RefreshCw, Router, Usb } from 'lucide-react';
 import { Button, IconButton, NumberField, TextField, toast } from '../../ui';
-import { connection, describeError, DEFAULT_ROBORIO_HOST, ROBORIO_PORT, useConnection } from '../../core';
+import { IS_DEMO, connection, describeError, DEFAULT_ROBORIO_HOST, ROBORIO_PORT, tCore, useConnection } from '../../core';
 import { describeSerialPort, isWebSerialSupported, listGrantedSerialPorts } from '../../core/transports/webserial';
 import { isTauri, listSerialPorts, type SerialPortInfo } from '../../core/transports/tauri';
 import { readStored, writeStored } from '../../lib/storage';
@@ -20,12 +20,13 @@ function Passive({ text }: { text: string }) {
 }
 
 export function WebSerialConnect({ onStarted }: { onStarted?: () => void }) {
-  const supported = isWebSerialSupported();
+  const supported = !IS_DEMO && isWebSerialSupported();
   const [ports, setPorts] = useState<SerialPort[]>([]);
   const refresh = useCallback(() => {
     if (supported) void listGrantedSerialPorts().then(setPorts, () => setPorts([]));
   }, [supported]);
   useEffect(refresh, [refresh]);
+  if (IS_DEMO) return <Passive text={tCore('demo.noHardware')} />;
   if (!supported) return <Passive text={tShell('conn.webserialUnsupported')} />;
   return (
     <div className="cy-hw">
@@ -69,6 +70,7 @@ export function DesktopSerialConnect({ onStarted }: { onStarted?: () => void }) 
     if (tauri) void listSerialPorts().then(setPorts, () => setPorts([]));
   }, [tauri]);
   useEffect(refresh, [refresh]);
+  if (IS_DEMO) return <Passive text={tCore('demo.noHardware')} />;
   if (!tauri) return <Passive text={tShell('conn.desktopOnly')} />;
   return (
     <div className="cy-hw">
@@ -105,6 +107,7 @@ export function RoboRioConnect({ onStarted }: { onStarted?: () => void }) {
   const tauri = isTauri();
   const [host, setHost] = useState(() => readStored(HOST_KEY) ?? DEFAULT_ROBORIO_HOST);
   const [port, setPort] = useState(ROBORIO_PORT);
+  if (IS_DEMO) return <Passive text={tCore('demo.noHardware')} />;
   if (!tauri) return <Passive text={tShell('conn.desktopOnly')} />;
   return (
     <div className="cy-hw">

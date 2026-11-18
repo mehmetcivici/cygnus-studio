@@ -133,10 +133,11 @@ const WORDS = {
 
 const PTYPE_NAMES = ['u32', 'i32', 'f32', 'bool', 'enum'];
 
-function fmt(v: number, digits = 3): string {
+/** Number for display: up to `digits` decimals, trailing zeros dropped, decimal comma in Turkish. */
+function fmt(v: number, digits = 3, lang: Lang = 'en'): string {
   if (!Number.isFinite(v)) return String(v);
-  if (Number.isInteger(v)) return String(v);
-  return v.toFixed(digits).replace(/\.?0+$/, '');
+  const s = Number.isInteger(v) ? String(v) : v.toFixed(digits).replace(/\.?0+$/, '');
+  return lang === 'tr' ? s.replace('.', ',') : s;
 }
 
 const hex = (v: number, w: number): string => `0x${v.toString(16).toUpperCase().padStart(w, '0')}`;
@@ -202,7 +203,7 @@ export function describeFrame(frame: CanFrame, opts: DescribeOptions = {}): Fram
         const sig = model.signals.find((s) => s.key === f.signal);
         const v = values[f.signal] ?? NaN;
         const opt = sig?.options?.find((o) => o.value === v);
-        add(f.signal, opt ? L(opt.label) : `${fmt(v, sig?.digits ?? 3)}${sig?.unit ? ` ${sig.unit}` : ''}`, sig ? L(sig.label) : f.signal);
+        add(f.signal, opt ? L(opt.label) : `${fmt(v, sig?.digits ?? 3, lang)}${sig?.unit ? ` ${sig.unit}` : ''}`, sig ? L(sig.label) : f.signal);
       }
     }
   } else if (id.cls === Cls.CTRL) {
@@ -241,7 +242,7 @@ function describeCtrl(frame: CanFrame, index: number, model: ModelDef | undefine
     if (!m) return;
     const mode = c.modes?.find((x) => x.value === m.mode);
     add('mode', mode ? mode.label[lang] : String(m.mode));
-    add('value', `${fmt(m.value)}${mode?.unit ? ` ${mode.unit}` : ''}`);
+    add('value', `${fmt(m.value, 3, lang)}${mode?.unit ? ` ${mode.unit}` : ''}`);
   } else if (c.format === 'servo4') {
     const m = decodeCtrlServo(frame.data, index);
     if (!m) return;
@@ -362,7 +363,7 @@ function describeMessage(
     case 'paramValue':
       add('pid', paramName(m.pid));
       add('ptype', PTYPE_NAMES[m.ptype] ?? String(m.ptype));
-      add('value', fmt(m.value, 6));
+      add('value', fmt(m.value, 6, lang));
       if (m.kind === 'paramValue') add('status', L(PARAM_STATUS_LABELS[m.status], String(m.status)));
       return;
     case 'streamConfig': {
@@ -379,7 +380,7 @@ function describeMessage(
       add('firstSlot', String(m.firstSlot));
       add('t100us', String(m.t100us));
       const k = streamDataCount(data);
-      for (let i = 0; i < k; i++) add(`slot.${m.firstSlot + i}`, fmt(streamDataValue(data, i), 4), `#${m.firstSlot + i}`);
+      for (let i = 0; i < k; i++) add(`slot.${m.firstSlot + i}`, fmt(streamDataValue(data, i), 4, lang), `#${m.firstSlot + i}`);
       return;
     }
     case 'fwBegin':

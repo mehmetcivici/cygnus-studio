@@ -1,3 +1,4 @@
+import { IS_DEMO, showReportPreview } from '../demo/demo';
 /**
  * Printable reports without giving report content any power over the app.
  *
@@ -81,6 +82,10 @@ function asDocument(doc: string | SafeHtml, opts?: ReportDocOptions): string {
  */
 export function openReportWindow(doc: string | SafeHtml, opts?: ReportDocOptions): boolean {
   if (typeof window === 'undefined' || typeof URL.createObjectURL !== 'function') return false;
+  if (IS_DEMO) {
+    showReportPreview(asDocument(doc, opts), false);
+    return true;
+  }
   const url = URL.createObjectURL(new Blob([asDocument(doc, opts)], { type: 'text/html;charset=utf-8' }));
   window.open(url, '_blank', 'noopener,noreferrer');
   // The new page loads asynchronously; keep the URL long enough for slow machines.
@@ -94,6 +99,10 @@ export function openReportWindow(doc: string | SafeHtml, opts?: ReportDocOptions
  */
 export function printReport(doc: string | SafeHtml, opts?: ReportDocOptions): Promise<void> {
   if (typeof document === 'undefined') return Promise.resolve();
+  if (IS_DEMO) {
+    showReportPreview(asDocument(doc, opts), true);
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
     const frame = document.createElement('iframe');
     // allow-same-origin only lets the app call print(); without allow-scripts nothing runs inside.

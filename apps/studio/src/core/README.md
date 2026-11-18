@@ -76,7 +76,7 @@ Kurtarma süresince ekran `useBusyLock(...)` tutmalı.
 
 ## Senaryo seçenekleri
 
-`connection.connectScenario('frc.swerve4', { assigned: false })` fabrika çıkışı kartlarla başlatır (numara 63);
+`connection.connectScenario('vehicle.frc.swerve4', { assigned: false })` fabrika çıkışı kartlarla başlatır (numara 63);
 `connection.connect(src, { force: true })` meşgul kilidi onayını atlar.
 
 ## Seçili cihaz
@@ -178,6 +178,14 @@ await printReport(body, { title, css });                                      //
 - Belge `REPORT_CSP` (`script-src` yok, ağ yok) taşır; pencere `noopener,noreferrer` ile açılır (`window.opener` yok),
   `printReport` iframe'i `allow-scripts` OLMADAN sandbox'lanır. Rapora betik/yazdır düğmesi koymayın: yazdırma tarayıcıdan
   (Ctrl+P) ya da `printReport` ile. `window.open('')` + `document.write` KULLANMAYIN.
+
+## Çevrimiçi demo (`npm run build:demo`, `IS_DEMO`)
+
+Demo, claude.ai'da `sandbox="allow-scripts"` bir iframe içinde çalışır: indirme, yeni pencere, yazdırma, seri port yok;
+`localStorage` fırlatabilir. Bu yüzden: `downloadFile()` demoda bilgi toast'ı gösterir ve `false` döner (başarı mesajını
+buna göre verin); `openReportWindow`/`printReport` demoda raporu uygulama içi önizlemede (`ReportPreview`, betiksiz
+sandbox iframe) açar; seri port/roboRIO seçenekleri açıklamasıyla pasiftir. `alert/confirm/prompt` kullanmayın
+(`ConfirmDialog`/toast); panoya kopyalama yalnız tıklama işleyicisinde ve hata yakalanarak; depolama `lib/storage`.
 
 ## Meşgul kilidi (uzun işlem sürerken ekran değişimi / bağlantı kesme onayı)
 

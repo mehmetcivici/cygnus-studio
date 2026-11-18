@@ -6,7 +6,7 @@ import type { ModelDef } from '../schema';
 export const GyroCalStatus = { NONE: 0, RUNNING: 1, DONE: 2, FAILED_MOTION: 3 } as const;
 
 const AXIS_SIGNALS = (['x', 'y', 'z'] as const).map((a, i) =>
-  sig(4 + i, `gyro.${a}`, 'dps', [`Açısal hız ${a.toUpperCase()}`, `Angular rate ${a.toUpperCase()}`], [-2000, 2000], 1),
+  sig(4 + i, `gyro.${a}`, '°/s', [`Açısal hız ${a.toUpperCase()}`, `Angular rate ${a.toUpperCase()}`], [-2000, 2000], 1),
 );
 const ACCEL_SIGNALS = (['x', 'y', 'z'] as const).map((a, i) =>
   sig(7 + i, `accel.${a}`, 'g', [`İvme ${a.toUpperCase()}`, `Acceleration ${a.toUpperCase()}`], [-16, 16], 3),
@@ -55,7 +55,7 @@ export const GYRO: ModelDef = defineModel({
       { unit: 's', min: 1, max: 30, step: 0.5, def: 4 }),
     pF32(0x0113, 'fusion.motion_dps', 'fusion', ['Hareket algılama eşiği', 'Motion detection threshold'],
       ['Kalibrasyon sırasında bu açısal hız aşılırsa kalibrasyon iptal edilir.', 'Calibration is aborted if the angular rate exceeds this value.'],
-      { unit: 'dps', min: 0.1, max: 20, step: 0.1, def: 2, advanced: true }),
+      { unit: '°/s', min: 0.1, max: 20, step: 0.1, def: 2, advanced: true }),
     pBool(0x0114, 'fusion.yaw_invert', 'fusion', ['Yaw yönünü çevir', 'Invert yaw'],
       ['Saat yönünde dönüşün pozitif yaw sayılmasını sağlar.', 'Makes clockwise rotation count as positive yaw.'],
       false),
@@ -86,7 +86,7 @@ export const GYRO: ModelDef = defineModel({
       options: opts(
         [GyroCalStatus.NONE, 'Kalibre edilmedi', 'Not calibrated'],
         [GyroCalStatus.RUNNING, 'Kalibre ediliyor', 'Calibrating'],
-        [GyroCalStatus.DONE, 'Kalibre', 'Calibrated'],
+        [GyroCalStatus.DONE, 'Kalibre edildi', 'Calibrated'],
         [GyroCalStatus.FAILED_MOTION, 'Hareket nedeniyle başarısız', 'Failed due to motion'],
       ),
     }),

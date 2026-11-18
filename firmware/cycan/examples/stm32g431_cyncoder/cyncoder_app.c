@@ -154,6 +154,7 @@ static const cycan_app_t k_app = {
     k_params, (uint16_t)(sizeof k_params / sizeof k_params[0]),
     status_fill, signal_read, /* ctrl: sensor */ NULL, command, /* neutral: nothing to stop */ NULL,
     /* param_validate: catalog enums are contiguous */ NULL,
+    /* moving_cmds: nothing moves */ NULL, 0,
 };
 
 /* ---- Main loop ------------------------------------------------------------------- */

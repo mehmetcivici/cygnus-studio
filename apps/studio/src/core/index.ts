@@ -68,6 +68,8 @@ export type { ProjectSection, ProjectSectionOptions } from './project/sections';
 export { parseProject, serializeProject, emptyProject, PROJECT_EXT, PROJECT_VERSION } from './project/schema';
 export type { ProjectFile, ProjectDevice } from './project/schema';
 export { downloadFile, pickFile, safeFileName } from './project/files';
+export { IS_DEMO, useReportPreview, showReportPreview, closeReportPreview } from './demo/demo';
+export { tCore } from './messages';
 
 // settings
 export { useSettings, updateSettings, toDisplayUnit, fromDisplayUnit, setTheme, setLang, useLang } from './settings';

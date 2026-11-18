@@ -304,6 +304,12 @@ export interface DeviceHandle {
   onSignals(cb: (u: SignalUpdate) => void): () => void;
 
   command(keyOrCmd: string | number, arg?: number, opts?: CommandOptions): Promise<CommandResult>;
+  /**
+   * Cancels a running command that moves the mechanism (catalog `movesActuator`): sends the
+   * neutral CTRL of every frame that has one, ending any control session first (PROTOCOL §4.5).
+   * The pending `command()` then rejects with the board's FAILED. No-op when nothing can be sent.
+   */
+  abortAction(): void;
   identify(seconds: number): Promise<void>;
   reboot(): Promise<void>;
   clearFaults(): Promise<void>;

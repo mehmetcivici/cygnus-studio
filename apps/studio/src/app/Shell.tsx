@@ -11,6 +11,7 @@ import { StatusBar } from './StatusBar';
 import { SimDrawer } from './sim/SimPanel';
 import { GlobalDriveBanner, useDriving } from './DriveFrame';
 import { BusyPrompt } from './BusyPrompt';
+import { ReportPreview } from './ReportPreview';
 import './shell.css';
 
 function Screen() {
@@ -68,6 +69,7 @@ export function Shell() {
       <StatusBar />
       <SimDrawer />
       <BusyPrompt />
+      <ReportPreview />
     </div>
   );
 }

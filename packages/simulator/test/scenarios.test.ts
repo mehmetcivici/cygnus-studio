@@ -200,10 +200,17 @@ describe('scenarios', () => {
       }
     };
     run(1000); // warm-up (JIT)
-    const t0 = performance.now();
-    run(10_000);
-    const elapsed = performance.now() - t0;
-    expect(elapsed).toBeLessThan(2000);
+    // CPU time of this process, not wall time: other jobs on a loaded machine (parallel test
+    // workers, CI neighbours) preempt us but do not count. Best of three 3.3 s slices, so a
+    // single GC pause or frequency dip does not decide the result. 5× real time = 660 ms per slice.
+    const slices: number[] = [];
+    for (let k = 0; k < 3; k++) {
+      const c0 = process.cpuUsage();
+      run(3300);
+      const c = process.cpuUsage(c0);
+      slices.push((c.user + c.system) / 1000);
+    }
+    expect(Math.min(...slices)).toBeLessThan(660);
     expect(sim.nodes.every((n) => n.mode === 2)).toBe(true);
   });
 });

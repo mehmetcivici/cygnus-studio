@@ -37,10 +37,11 @@ export function triggerEstop(source: EstopSource = 'api'): void {
 /** Text-entry targets where a plain Space must type a space. */
 export function typingTarget(el: EventTarget | null): boolean {
   if (typeof HTMLElement === 'undefined' || !(el instanceof HTMLElement)) return false;
-  if (el.isContentEditable || el instanceof HTMLTextAreaElement) return true;
+  if (el.isContentEditable) return true;
+  if (el instanceof HTMLTextAreaElement) return !el.readOnly && !el.disabled;
   if (el instanceof HTMLInputElement) {
-    // Numeric fields never need a space, so Space still stops there.
-    if (el.dataset.numeric !== undefined) return false;
+    // Numeric fields never need a space, so Space still stops there; nor do read-only ones.
+    if (el.dataset.numeric !== undefined || el.readOnly || el.disabled) return false;
     return ['text', 'search', 'email', 'url', 'password', 'tel', ''].includes(el.type);
   }
   return false;

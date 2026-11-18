@@ -248,6 +248,7 @@ export const tTuner = registerMessages('tuner', {
       closed: 'Kapalı döngü (ölçülen)',
       plant: 'Tesis P (ölçülen)',
       freq: 'Frekans (Hz)',
+      phase: 'Faz',
     },
     assist: {
       never: 'Öneriler kendiliğinden uygulanmaz: öngörülen yanıta bakın, sonra siz uygulayın.',
@@ -620,6 +621,7 @@ export const tTuner = registerMessages('tuner', {
       closed: 'Closed loop (measured)',
       plant: 'Plant P (measured)',
       freq: 'Frequency (Hz)',
+      phase: 'Phase',
     },
     assist: {
       never: 'Suggestions are never applied by themselves: check the predicted response, then apply.',

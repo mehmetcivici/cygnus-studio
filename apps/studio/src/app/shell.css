@@ -292,3 +292,21 @@
 .cy-statusbar__item.cy-mono {
   font-size: var(--cy-fs-2xs);
 }
+
+/* Report preview (online demo) */
+.cy-report-preview__note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--cy-text-2);
+  font-size: var(--cy-fs-sm);
+}
+.cy-report-preview__frame {
+  display: block;
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 1px solid var(--cy-line);
+  border-radius: var(--cy-r-md);
+  background: #fff;
+}

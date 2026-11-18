@@ -368,3 +368,12 @@ button.cy-statusbar__item {
   font: inherit;
   cursor: pointer;
 }
+
+/* Narrow windows (1100 px): the top bar keeps the load and frame rate, drops the unit text and
+   the load bar so the slots do not overflow into the simulator button. */
+@media (max-width: 1260px) {
+  .cy-health__unit,
+  .cy-health__bar {
+    display: none;
+  }
+}

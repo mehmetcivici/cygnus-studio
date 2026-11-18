@@ -68,10 +68,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 0;
-  /* The next-step button stays reachable however tall the step is. */
+  /* The next-step button stays reachable however tall the step is. It sticks to the visible
+     bottom edge: the page content has 24px bottom padding, which content would show through. */
+  padding: 8px 0 32px;
+  margin-bottom: -24px;
   position: sticky;
-  bottom: 0;
+  bottom: -24px;
   z-index: 2;
   background: var(--cy-bg);
   border-top: 1px solid var(--cy-line-soft);
@@ -799,7 +801,8 @@ button.vh-issue:hover {
 }
 .vh-tune__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  /* The table (6 columns) needs the width more than the side panel does. */
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
   gap: 16px;
   align-items: start;
 }

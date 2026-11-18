@@ -183,7 +183,8 @@ typedef enum {
     CYCAN_NEUTRAL_CONFLICT,         /* address conflict detected */
     CYCAN_NEUTRAL_UNASSIGNED,       /* address changed by ASSIGN_ID */
     CYCAN_NEUTRAL_RESET,            /* about to reboot or enter the bootloader */
-    CYCAN_NEUTRAL_FAULT             /* an active fault was raised */
+    CYCAN_NEUTRAL_FAULT,            /* an active fault was raised */
+    CYCAN_NEUTRAL_ABORT             /* a neutral CTRL cancelled a running moving command (PROTOCOL 4.5) */
 } cycan_neutral_reason_t;
 
 /** What a CTRL frame asks for (return value of cycan_app_t.ctrl). */
@@ -239,7 +240,7 @@ typedef struct {
      * SELF_TEST and model commands (0x40+). Return a CYCAN_CMDST_* status and set *result.
      * Return CYCAN_CMDST_IN_PROGRESS for long operations and finish later with
      * cycan_command_finish(). An ESTOP ends a running command with FAILED (the library
-     * answers; the application aborts it in neutral(ESTOP)). NULL: every such command is
+     * answers; the application aborts it in neutral(ESTOP)); see also moving_cmds. NULL: every such command is
      * UNSUPPORTED.
      */
     uint8_t (*command)(cycan_node_t *node, uint8_t cmd, uint32_t arg, uint32_t *result);
@@ -247,6 +248,15 @@ typedef struct {
     void (*neutral)(cycan_node_t *node, cycan_neutral_reason_t reason);
     /** Optional extra validation (e.g. non-contiguous enum options); false = OUT_OF_RANGE. */
     bool (*param_validate)(cycan_node_t *node, const cycan_param_t *p, cycan_pval_t v);
+    /**
+     * Model commands that move the mechanism (catalog `movesActuator`, generated as
+     * CYCAN_<MODEL>_MOVING_CMDS). While one of them runs (IN_PROGRESS), a neutral CTRL frame
+     * cancels it (PROTOCOL 4.5) and so does every other event that forces the board neutral:
+     * the library answers FAILED and calls neutral(ABORT) (or neutral(<event>)); a later
+     * cycan_command_finish() is ignored. May be NULL.
+     */
+    const uint8_t *moving_cmds;
+    uint8_t moving_cmd_count;
 } cycan_app_t;
 
 /* ---- Node state (treat as opaque) ------------------------------------------------ */

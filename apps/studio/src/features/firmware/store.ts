@@ -149,7 +149,9 @@ function pushLog(e: Omit<LogEntry, 'id' | 'at'>): void {
 function onProgress(uid48: string, p: FirmwareProgress): void {
   const r = useFwUpdate.getState().runs[uid48];
   if (!r) return;
-  const patch: Partial<CardRun> = { phase: p.phase, fraction: p.fraction, sent: p.sent, total: p.total, rewinds: p.rewinds };
+  // Phases after the transfer report no byte count: keep what was sent (the card showed 0,0 / 6,1 kB at 96 %).
+  const sent = p.phase === 'transfer' || p.sent > 0 ? p.sent : Math.max(r.sent, p.sent);
+  const patch: Partial<CardRun> = { phase: p.phase, fraction: p.fraction, sent, total: p.total || r.total, rewinds: p.rewinds };
   if (p.phase === 'transfer') {
     const t0 = r.transferAt ?? now();
     patch.transferAt = t0;

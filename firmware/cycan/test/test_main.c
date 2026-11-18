@@ -28,6 +28,7 @@ int g_failures;
     X(test_node_estop)                  \
     X(test_node_estop_order)            \
     X(test_node_commands)               \
+    X(test_node_moving_abort)           \
     X(test_node_info_and_misc)          \
     X(test_node_tx_queue)               \
     X(test_node_cyncoder_table)         \

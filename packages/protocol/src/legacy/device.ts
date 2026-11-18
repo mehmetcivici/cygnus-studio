@@ -517,6 +517,8 @@ export class CyncoderV3Device implements DeviceHandle {
   clearEstop(): Promise<void> {
     return rejectUnsupported('estop');
   }
+  /** Legacy boards have no moving commands to cancel. */
+  abortAction(): void {}
   readFaults(): Promise<DeviceFaults> {
     return rejectUnsupported('faults');
   }

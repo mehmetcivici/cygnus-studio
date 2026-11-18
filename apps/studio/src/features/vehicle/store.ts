@@ -22,16 +22,29 @@ export interface Draft {
   customSlots: VehicleSlot[];
   selected: string | null;
   seq: SeqState;
+  /**
+   * Motor test answers per slot (true: right wheel, right way; false: needs a retest after a
+   * direction flip). Shared by the assignment and tune steps; a slot's answer is dropped when its
+   * board changes.
+   */
+  verified: Record<string, boolean>;
 }
 
-const EMPTY: Draft = { open: false, step: 'template', templateId: null, name: '', bindings: {}, history: [], tweaks: {}, customSlots: [], selected: null, seq: SEQ_IDLE };
+const EMPTY: Draft = { open: false, step: 'template', templateId: null, name: '', bindings: {}, history: [], tweaks: {}, customSlots: [], selected: null, seq: SEQ_IDLE, verified: {} };
 
 export const useDraft = create<Draft>(() => EMPTY);
 
 const HISTORY = 50;
 
+/** Verified answers of slots whose binding is unchanged in `next`. */
+function keepVerified(s: Draft, next: Bindings): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [id, v] of Object.entries(s.verified)) if (JSON.stringify(s.bindings[id]) === JSON.stringify(next[id]) && next[id]) out[id] = v;
+  return out;
+}
+
 function commit(next: Bindings): void {
-  useDraft.setState((s) => ({ bindings: next, history: [...s.history, s.bindings].slice(-HISTORY) }));
+  useDraft.setState((s) => ({ bindings: next, history: [...s.history, s.bindings].slice(-HISTORY), verified: keepVerified(s, next) }));
 }
 
 export const draft = {
@@ -55,10 +68,10 @@ export const draft = {
       useDraft.setState({ open: true });
       return;
     }
-    useDraft.setState({ open: true, templateId: id, name, bindings: {}, history: [], tweaks: {}, selected: null, seq: SEQ_IDLE, customSlots: s.customSlots });
+    useDraft.setState({ open: true, templateId: id, name, bindings: {}, history: [], tweaks: {}, selected: null, seq: SEQ_IDLE, customSlots: s.customSlots, verified: {} });
   },
   clearTemplate(): void {
-    useDraft.setState({ templateId: null, step: 'template', bindings: {}, history: [], tweaks: {}, selected: null, seq: SEQ_IDLE });
+    useDraft.setState({ templateId: null, step: 'template', bindings: {}, history: [], tweaks: {}, selected: null, seq: SEQ_IDLE, verified: {} });
   },
   setName(name: string): void {
     useDraft.setState({ name });
@@ -86,7 +99,7 @@ export const draft = {
   undo(): void {
     useDraft.setState((s) => {
       const prev = s.history[s.history.length - 1];
-      return prev ? { bindings: prev, history: s.history.slice(0, -1) } : s;
+      return prev ? { bindings: prev, history: s.history.slice(0, -1), verified: keepVerified(s, prev) } : s;
     });
   },
   setTweak(slotId: string, patch: Partial<SlotTweak>): void {
@@ -97,6 +110,10 @@ export const draft = {
       if (Object.keys(cur).length === 0) delete tweaks[slotId];
       return { tweaks };
     });
+  },
+  /** Records a motor test answer for a slot (see `Draft.verified`). */
+  setVerified(slotId: string, ok: boolean): void {
+    useDraft.setState((s) => ({ verified: { ...s.verified, [slotId]: ok } }));
   },
   setCustomSlots(fn: (slots: VehicleSlot[]) => VehicleSlot[]): void {
     useDraft.setState((s) => {

@@ -3,7 +3,7 @@ import { Copy, Hash, Lightbulb, Pencil, Power, Save, TriangleAlert } from 'lucid
 import { NUM_MAX, NUM_MIN, isCyError } from '@cygnus/protocol';
 import { useI18n } from '../../i18n';
 import { Badge, Button, Checkbox, IconButton, Modal, NumberField, StatusDot, toast, cx } from '../../ui';
-import { ModelIcon, connection, describeError, fmtFw, modelText, useDevices, type DeviceView } from '../../core';
+import { ModelIcon, connection, describeError, tCore, fmtFw, modelText, useDevices, type DeviceView } from '../../core';
 import { rebootDevice, saveDevice } from './ops';
 import { tDevice } from './messages';
 
@@ -205,7 +205,13 @@ export function DeviceHeader({ device }: { device: DeviceView }) {
     device.handle.identify(5).catch((e: unknown) => toast.error(tDevice('head.identifyFailed'), { description: describeError(e, lang) }));
   };
   const copyUid = (): void => {
-    void navigator.clipboard?.writeText(device.uid48).then(() => toast.info(tDevice('head.uidCopied'), { id: 'uid-copy' }));
+    // Clipboard may be missing or refused (sandboxed demo frame, no permission): say so.
+    const fail = (): void => void toast.error(tCore('demo.noClipboard'), { id: 'uid-copy' });
+    try {
+      navigator.clipboard.writeText(device.uid48).then(() => toast.info(tDevice('head.uidCopied'), { id: 'uid-copy' }), fail);
+    } catch {
+      fail();
+    }
   };
   const catalogRev = device.def?.catalogRev;
   return (

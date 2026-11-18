@@ -49,7 +49,7 @@ Zaman yalnız `T` ile ilerler; `F` çerçeveleri o anki sanal zamanda teslim edi
 | `S <işaret>` | Bariyer onayı. |
 | `M BOOT` / `M APP` / `M OFF` | Kip değişti (bootloader başladı / uygulama başladı / güç yok). |
 | `A <etkin 0/1> <mode> <value>` | ESC modeli: eyleyici çıkışı değişti (uygulanan CTRL; nötrde `A 0 0 0`). |
-| `N <neden>` | Kütüphane kartı nötre zorladı: `CTRL_TIMEOUT`, `ESTOP`, `CONFLICT`, `UNASSIGNED`, `RESET`, `FAULT`. |
+| `N <neden>` | Kütüphane kartı nötre zorladı: `CTRL_TIMEOUT`, `ESTOP`, `CONFLICT`, `UNASSIGNED`, `RESET`, `FAULT`, `ABORT` (nötr CTRL çalışan hareketli komutu iptal etti, PROTOCOL §4.5). |
 | `E <ileti>` | Hata/bilgi: `bad-frame`, `bad-time`, `unknown-command <x>`, `power-cut`, `store-ignored <yol>`, `store-write-failed <yol>`. |
 
 ### Örnek

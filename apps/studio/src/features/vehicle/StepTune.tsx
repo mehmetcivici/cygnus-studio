@@ -55,7 +55,7 @@ export function StepTune({
   const bindings = useDraft((s) => s.bindings);
   const tweaks: Tweaks = useDraft((s) => s.tweaks);
   const [sel, setSel] = useState<string | null>(null);
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const checked = useDraft((s) => s.verified);
   const rows = tpl.slots.filter((s) => bindings[s.id]);
   const clashes = useMemo(() => numberClashes(tpl, bindings), [tpl, bindings]);
   const slot = rows.find((s) => s.id === sel) ?? null;
@@ -307,9 +307,6 @@ export function StepTune({
                   binding={bindings[slot.id]}
                   propellers={propellers}
                   invert={tweaks[slot.id]?.invert}
-                  onAnswer={(a) =>
-                    setChecked((c) => ({ ...c, [slot.id]: a === "ok" }))
-                  }
                 />
               )}
             </>

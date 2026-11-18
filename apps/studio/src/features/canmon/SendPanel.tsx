@@ -220,11 +220,13 @@ export const SendPanel = memo(function SendPanel({ bus, connected }: SendPanelPr
           <div className="canmon-send__row">
             <label className="canmon-field canmon-field--id">
               <span>{tCanMonitor('col.id')}</span>
-              <TextField size="sm" mono value={idText} onChange={setId} error={id === null} aria-label={tCanMonitor('col.id')} block />
+              <TextField size="sm" mono value={idText} onChange={setId} error={id === null} aria-label={tCanMonitor('col.id')} block readOnly={running} />
             </label>
             <label className="canmon-field canmon-field--data">
               <span>{tCanMonitor('send.data')}</span>
-              <TextField size="sm" mono value={dataText} onChange={setDataText} error={!parsed.ok && parsed.error !== 'badId'} aria-label={tCanMonitor('send.data')} placeholder="01 02 03" block />
+              {/* Read-only while sending periodically: the frame cannot change under the running
+                  sender, and Space in the focused field is E-STOP again (uygulama #3). */}
+              <TextField size="sm" mono value={dataText} onChange={setDataText} error={!parsed.ok && parsed.error !== 'badId'} aria-label={tCanMonitor('send.data')} placeholder="01 02 03" block readOnly={running} />
             </label>
             <div className="canmon-send__toggles">
               <Tooltip content={fdCapable ? tCanMonitor('send.fd') : tCanMonitor('send.noFd')}>

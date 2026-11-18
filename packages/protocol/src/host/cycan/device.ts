@@ -684,6 +684,11 @@ export class CyCanDevice implements DeviceHandle {
     });
   }
 
+  abortAction(): void {
+    if (!this.capabilities.control || !this.online || this.unassigned) return;
+    this.control.neutralAll();
+  }
+
   /** Sends a COMMAND without the resolved-state check; used by the firmware updater. */
   commandRaw(cmd: number, wireArg: number, opts: CommandOptions & { attempts?: number } = {}): Promise<CommandResult> {
     return this.requests.request<CommandResult>({
