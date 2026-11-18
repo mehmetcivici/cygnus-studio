@@ -35,14 +35,21 @@ export interface ApplyOptions {
   persist?: boolean;
 }
 
-/** Plan input for `planApply` from the boards the host currently knows (online, numbered or not). */
+/**
+ * Plan input for `planApply` from every board the host knows. Lost boards and boards of an
+ * unknown model come with `online: false`: they cannot be bound, but their numbers stay
+ * reserved (as `bus.suggestNumber` does), so a board coming back does not collide.
+ */
 export function planDevices(devices: readonly DeviceHandle[]): PlanDevice[] {
-  const out: PlanDevice[] = [];
-  for (const d of devices) {
-    if (!d.online || !d.def) continue;
-    out.push({ uid48: d.uid48, model: d.def.key, devType: d.devType, num: d.num, name: d.name, params: Object.fromEntries(d.params) });
-  }
-  return out;
+  return devices.map((d) => ({
+    uid48: d.uid48,
+    model: d.def?.key ?? `model:${d.model}`,
+    devType: d.devType,
+    num: d.num,
+    name: d.name,
+    params: Object.fromEntries(d.params),
+    online: d.online && d.def !== undefined,
+  }));
 }
 
 const norm = (uid: string): string => uid.toLowerCase();
@@ -118,6 +125,9 @@ export async function applyPlan(bus: ApplyBus, plan: PlanResult | readonly PlanS
     for (const s of rest) if (!touched.includes(norm(s.uid48))) touched.push(norm(s.uid48));
     for (const uid of touched) all.push({ kind: 'save', uid48: uid });
   }
+
+  // Renumbering a driven board is refused (and would be unsafe): stop this host's loops first.
+  for (const d of bus.devices) if (d.control?.active) d.control.stop();
 
   const results: ApplyStepResult[] = [];
   for (let i = 0; i < all.length; i++) {

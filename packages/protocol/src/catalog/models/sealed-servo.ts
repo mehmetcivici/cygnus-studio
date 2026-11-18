@@ -86,7 +86,7 @@ export const SEALED_SERVO: ModelDef = defineModel({
     {
       index: 0,
       label: tx(['Hızlı', 'Fast']),
-      defaultPeriodMs: 10,
+      defaultPeriodMs: 20,
       fields: [
         { signal: 'position', byte: 0, type: 'f32' },
         { signal: 'velocity', byte: 4, type: 'i16', scale: 0.1 },
@@ -153,6 +153,8 @@ export const SEALED_SERVO: ModelDef = defineModel({
         unit: '°',
         gains: { kp: 'pos.kp', ki: 'pos.ki', kd: 'pos.kd', iMax: 'pos.i_max' },
         extraParams: ['motion.max_speed_dps', 'motion.max_accel_dps2', 'pos.tolerance_deg'],
+        openMode: 'duty',
+        integrating: true,
         signals: { target: 'setpoint', measured: 'position', output: 'output', error: 'error' },
       },
     ],

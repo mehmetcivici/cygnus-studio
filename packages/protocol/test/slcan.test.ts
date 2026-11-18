@@ -178,12 +178,30 @@ describe('SlcanTransport', () => {
     expect(port.written.length).toBe(n);
   });
 
-  it('fails when the adapter rejects a setup command', async () => {
+  it('falls back to classic CAN when a classic adapter refuses the FD data rate', async () => {
     const port = new FakePort();
     port.autoReply = (l) => (l === 'Y2\r' ? '\x07' : '\r');
     const t = new SlcanTransport(port, { scheduler: new ManualScheduler() });
-    await expect(t.open()).rejects.toThrow(/rejected 'Y2'/);
-    expect(t.currentState).toEqual({ phase: 'error', error: "adapter rejected 'Y2'" });
+    await t.open();
+    expect(t.currentState).toEqual({ phase: 'open', notice: 'fd_unsupported' });
+    expect(t.info.fd).toBe(false);
+    const n = port.written.length;
+    t.send({ id: 1, data: new Uint8Array(12), fd: true, brs: true });
+    expect(port.written.length).toBe(n);
+    // An FD adapter on the next open gets FD again.
+    await t.close();
+    port.autoReply = () => '\r';
+    await t.open();
+    expect(t.info.fd).toBe(true);
+    expect(t.currentState).toEqual({ phase: 'open' });
+  });
+
+  it('fails when the adapter rejects a setup command it cannot do without', async () => {
+    const port = new FakePort();
+    port.autoReply = (l) => (l === 'S8\r' ? '\x07' : '\r');
+    const t = new SlcanTransport(port, { scheduler: new ManualScheduler() });
+    await expect(t.open()).rejects.toThrow(/rejected 'S8'/);
+    expect(t.currentState).toEqual({ phase: 'error', error: "adapter rejected 'S8'" });
   });
 
   it('times out on a silent adapter using the scheduler', async () => {

@@ -1,7 +1,14 @@
 import type { ModelDef } from '../catalog/schema';
 import { type CanFrame, type TxFrame, BROADCAST_ALL } from '../core/frame';
+import {
+  Command,
+  ESTOP_REPEAT_COUNT,
+  ESTOP_REPEAT_GAP_MS,
+  RECOVERY_BEACON_PERIOD_MS,
+  RECOVERY_STAY_MAGIC,
+} from '../core/constants';
 import { validateCyfw } from '../core/cyfw';
-import { encodeEstop } from '../core/messages';
+import { encodeCommand, encodeEstop } from '../core/messages';
 import type { Scheduler, Transport, TransportState } from '../transport/types';
 import { CyCanDriver, type ResolveOutcome, type ResolveStep } from './cycan/driver';
 import { describeFrame } from './describe';
@@ -35,6 +42,8 @@ export interface BusEvents {
   frame: BusFrameEvent;
   stats: BusStats;
   transportState: TransportState;
+  /** Recovery mode started (true) or stopped (false). */
+  recovery: boolean;
 }
 
 export interface CygnusBusOptions {
@@ -49,7 +58,8 @@ export interface CygnusBusOptions {
 export interface FirmwareBatchItem {
   device: DeviceHandle;
   ok: boolean;
-  skipped?: 'no_image' | 'same_version' | 'offline';
+  /** `aborted`: never started because the link went down while an earlier board was updated. */
+  skipped?: 'no_image' | 'same_version' | 'offline' | 'aborted';
   result?: FirmwareResult;
   error?: Error;
 }
@@ -68,6 +78,42 @@ export interface FirmwareBatchOptions {
 const NOMINAL_BPS = 1_000_000;
 
 /**
+ * Recovery mode (PROTOCOL §9.0): broadcasts ENTER_BOOTLOADER with the recovery argument every
+ * 20 ms, so a board powered up meanwhile stays in its bootloader instead of starting a broken
+ * application. The user power-cycles the vehicle while it runs.
+ */
+export interface BusRecovery {
+  readonly active: boolean;
+  start(): void;
+  stop(): void;
+  /** Online boards waiting in their bootloader. */
+  readonly devices: DeviceHandle[];
+}
+
+/**
+ * Bus load estimate for admitting streams (PROTOCOL §10.1): the last measured window, plus
+ * what streams committed since that window was measured.
+ */
+class LoadBudget {
+  private committed = 0;
+  private atSnapshot = 0;
+  private measured = 0;
+
+  commit(delta: number): void {
+    this.committed = Math.max(0, this.committed + delta);
+  }
+
+  snapshot(measured: number): void {
+    this.measured = measured;
+    this.atSnapshot = this.committed;
+  }
+
+  get estimate(): number {
+    return Math.max(0, this.measured - this.atSnapshot) + this.committed;
+  }
+}
+
+/**
  * Host client for one CAN bus: owns the transport subscription, hands frames to protocol
  * drivers, keeps bus statistics and exposes discovered boards as DeviceHandles.
  */
@@ -82,6 +128,10 @@ export class CygnusBus {
   private started = false;
   private linkUp = false;
   private transportState: TransportState = { phase: 'closed' };
+  private readonly budget = new LoadBudget();
+  private readonly estopTimers = new Set<unknown>();
+  private recoveryTimer: unknown = undefined;
+  readonly recovery: BusRecovery;
 
   constructor(
     readonly transport: Transport,
@@ -92,10 +142,15 @@ export class CygnusBus {
     this.drivers = [this.cycan, ...(opts.drivers ?? [])];
     this.stats = new StatsCounter(scheduler.now(), NOMINAL_BPS, (opts.dataBitrateMbps ?? 2) * 1_000_000);
     this.statsIntervalMs = opts.statsIntervalMs ?? 1000;
+    const budget = this.budget;
     const ctx: DriverContext = {
       scheduler,
-      transportFd: transport.info.fd,
+      get transportFd() {
+        return transport.info.fd;
+      },
       isOpen: () => this.linkUp,
+      estimatedLoad: () => budget.estimate,
+      commitStreamLoad: (delta) => budget.commit(delta),
       send: (f) => this.send(f),
       emitDevice: (kind: DeviceEventKind, d: DeviceHandle) => this.events.emit(kind, d),
       countRequestTimeout: () => {
@@ -106,6 +161,17 @@ export class CygnusBus {
       },
     };
     for (const d of this.drivers) d.attach(ctx);
+    const bus = this;
+    this.recovery = {
+      get active() {
+        return bus.recoveryTimer !== undefined;
+      },
+      start: () => this.startRecovery(),
+      stop: () => this.stopRecovery(),
+      get devices() {
+        return bus.devices.filter((d) => d.online && d.bootloader);
+      },
+    };
   }
 
   on<K extends keyof BusEvents>(event: K, cb: (payload: BusEvents[K]) => void): () => void {
@@ -142,9 +208,13 @@ export class CygnusBus {
     this.linkIsUp();
   }
 
-  /** Stops everything, removes all devices and closes the transport. */
+  /**
+   * Stops everything, removes all devices and closes the transport. Boards still driven by a
+   * control loop get their neutral command first, while the link is up.
+   */
   async stop(): Promise<void> {
     if (!this.started) return;
+    if (this.linkUp) for (const d of this.devices) if (d.control?.active) d.control.stop();
     this.teardown();
     await this.transport.close();
     // The state listener is already gone; report the final state ourselves.
@@ -159,6 +229,9 @@ export class CygnusBus {
     this.unsubs = [];
     if (this.statsTimer !== undefined) this.scheduler.clearTimeout(this.statsTimer);
     this.statsTimer = undefined;
+    for (const t of this.estopTimers) this.scheduler.clearTimeout(t);
+    this.estopTimers.clear();
+    this.stopRecovery();
     for (const d of this.drivers) d.stop();
   }
 
@@ -176,6 +249,7 @@ export class CygnusBus {
     if (s.phase === 'open') this.linkIsUp();
     else if (this.linkUp) {
       this.linkUp = false;
+      this.stopRecovery();
       for (const d of this.drivers) d.transportDown();
     }
   }
@@ -185,6 +259,7 @@ export class CygnusBus {
       this.statsTimer = undefined;
       if (!this.started) return;
       const s = this.stats.snapshot(this.scheduler.now());
+      this.budget.snapshot(s.loadPct / 100);
       this.armStats();
       this.events.emit('stats', s);
     }, this.statsIntervalMs);
@@ -268,10 +343,37 @@ export class CygnusBus {
   // ---------------------------------------------------------------------------------------
   // Safety and batch operations
 
-  /** Software emergency stop: ends every control loop first, then broadcasts ESTOP. */
+  /**
+   * Software emergency stop: ends every control loop first, then broadcasts ESTOP three times,
+   * 10 ms apart (PROTOCOL §4.7), so one lost frame does not leave a board running.
+   */
   estop(): void {
     for (const d of this.drivers) d.haltControl();
     this.send(encodeEstop(BROADCAST_ALL));
+    for (let i = 1; i < ESTOP_REPEAT_COUNT; i++) {
+      const t = this.scheduler.setTimeout(() => {
+        this.estopTimers.delete(t);
+        this.send(encodeEstop(BROADCAST_ALL));
+      }, i * ESTOP_REPEAT_GAP_MS);
+      this.estopTimers.add(t);
+    }
+  }
+
+  private startRecovery(): void {
+    if (this.recoveryTimer !== undefined || !this.linkUp) return;
+    const beacon = (): void => {
+      this.send(encodeCommand(BROADCAST_ALL, { cmd: Command.ENTER_BOOTLOADER, arg: RECOVERY_STAY_MAGIC }));
+      this.recoveryTimer = this.scheduler.setTimeout(beacon, RECOVERY_BEACON_PERIOD_MS);
+    };
+    beacon();
+    this.events.emit('recovery', true);
+  }
+
+  private stopRecovery(): void {
+    if (this.recoveryTimer === undefined) return;
+    this.scheduler.clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = undefined;
+    this.events.emit('recovery', false);
   }
 
   /**
@@ -318,7 +420,12 @@ export class CygnusBus {
         out.push({ device: item.device, ok: true, result });
       } catch (e) {
         out.push({ device: item.device, ok: false, error: e instanceof Error ? e : new Error(String(e)) });
-        if (e instanceof CyError && e.code === 'DISCONNECTED') break;
+        if (e instanceof CyError && e.code === 'DISCONNECTED') {
+          for (const rest of queue.slice(i + 1)) {
+            out.push({ device: rest.device, ok: false, skipped: 'aborted', error: new CyError('DISCONNECTED', 'link went down') });
+          }
+          break;
+        }
       }
     }
     return out;

@@ -15,8 +15,13 @@ describe('control', () => {
     expect(h.control.active).toBe(true);
     expect(h.control.periodMs).toBe(20);
     await run(r.sched, 100);
-    expect(n.ctrl.length).toBeGreaterThanOrEqual(5);
-    const gaps = n.ctrl.slice(1).map((c, i) => c.t - (n.ctrl[i]?.t ?? 0));
+    expect(n.ctrl.length).toBeGreaterThanOrEqual(6);
+    // Neutral-first rule: the session opens with a neutral command, then the target.
+    expect(decodeCtrlSet(n.ctrl[0]!.frame.data)).toMatchObject({ mode: EscMode.OFF, value: 0 });
+    expect(decodeCtrlSet(n.ctrl[1]!.frame.data)).toMatchObject({ mode: EscMode.VELOCITY, value: 1000 });
+    expect(n.ctrl[1]!.t).toBe(n.ctrl[0]!.t);
+    const targets = n.ctrl.slice(1);
+    const gaps = targets.slice(1).map((c, i) => c.t - (targets[i]?.t ?? 0));
     expect(new Set(gaps)).toEqual(new Set([20]));
     expect(n.enabled).toBe(true);
     loop.update(2000);

@@ -105,7 +105,7 @@ export const GYRO: ModelDef = defineModel({
     {
       index: 1,
       label: tx(['Açısal hız', 'Angular rate']),
-      defaultPeriodMs: 10,
+      defaultPeriodMs: 20,
       fields: [
         { signal: 'gyro.x', byte: 0, type: 'i16', scale: 0.1 },
         { signal: 'gyro.y', byte: 2, type: 'i16', scale: 0.1 },
@@ -117,7 +117,7 @@ export const GYRO: ModelDef = defineModel({
     {
       index: 2,
       label: tx(['İvme', 'Acceleration']),
-      defaultPeriodMs: 20,
+      defaultPeriodMs: 50,
       fields: [
         { signal: 'accel.x', byte: 0, type: 'i16', scale: 0.001 },
         { signal: 'accel.y', byte: 2, type: 'i16', scale: 0.001 },
@@ -127,7 +127,7 @@ export const GYRO: ModelDef = defineModel({
     {
       index: 3,
       label: tx(['Kuaterniyon', 'Quaternion']),
-      defaultPeriodMs: 20,
+      defaultPeriodMs: 50,
       fields: [
         { signal: 'quat.w', byte: 0, type: 'i16', scale: Q14 },
         { signal: 'quat.x', byte: 2, type: 'i16', scale: Q14 },

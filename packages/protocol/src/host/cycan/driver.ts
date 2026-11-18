@@ -78,7 +78,7 @@ export class CyCanDriver implements BusDriver, DeviceHost {
   }
 
   haltControl(): void {
-    for (const d of this.byUid.values()) d.control.halt();
+    for (const d of this.byUid.values()) d.control.halt('estop');
   }
 
   devices(): Iterable<DeviceHandle> {
@@ -313,9 +313,14 @@ export class CyCanDriver implements BusDriver, DeviceHost {
       }
       if (!this.running) throw disconnectedError();
       const dev = this.byUid.get(uid48);
-      if (dev && !opts.force) {
+      if (dev) {
         const holder = this.deviceAt(dev.devType, num);
-        if (holder && holder !== dev && holder.resolved) {
+        // Renumbering a driven board would send its commands to another board (PROTOCOL §7);
+        // so would handing a driven board's number to someone else. Stop driving first.
+        if (dev.driven || (holder && holder !== dev && holder.driven)) {
+          throw new CyError('BUSY', 'board is being driven; stop its control loop first', { reason: 'driving' });
+        }
+        if (!opts.force && holder && holder !== dev && holder.resolved) {
           throw new CyError('INVALID', `#${num} is used by ${holder.uid48}`, { reason: 'number_taken' });
         }
       }
@@ -324,6 +329,7 @@ export class CyCanDriver implements BusDriver, DeviceHost {
         key: `a:${uid48}`,
         what: `ASSIGN_ID ${uid48ToHex(uid48)}`,
         timeoutMs: Timing.ENUM_WINDOW_MS + Timing.REQUEST_TIMEOUT_MS,
+        selfMatching: true,
         frame: () => encodeAssignId(BROADCAST_ALL, { uid48, newNum: num, persist }),
         accept: (d) => {
           const r = decodeEnumRsp(d);

@@ -139,6 +139,9 @@ describe('RoboRioBridgeTransport', () => {
     a.sock.feed([0x7f]);
     expect(a.t.currentState).toMatchObject({ phase: 'error' });
     expect(a.t.currentState.error).toContain('0x7f');
+    // The desynchronised socket is released; reconnecting takes a new transport.
+    expect(a.sock.closed).toBe(true);
+    await expect(a.t.open()).rejects.toThrow(/new transport/);
 
     const b = setup();
     b.sock.feed(HELLO_BRIDGE);

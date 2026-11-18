@@ -46,6 +46,7 @@ Her modele otomatik eklenen ortak parametreler: `can.data_bitrate` (0x0001), `ca
 | 5 | `clear_faults` | Hataları temizle |
 | 6 | `self_test` | Öz-test |
 | 7 | `clear_estop` | Acil durdurmayı kaldır |
+| 8 | `load_saved` | Kayıtlı ayarları geri yükle |
 
 **Kart durumları**
 
@@ -121,11 +122,11 @@ DEVTYPE **2** · anahtar `esc20a` · katalog sürümü 1 · akış en küçük p
 | 0x0001 | `can.data_bitrate` | FD veri hızı | enum |  |  | 2 Mbit/s | CAN hattı | yeniden başlatma | CAN-FD veri evresinin hızı; Klasik seçilirse kart FD çerçevesi göndermez (roboRIO ve MCP2515 hatları için). Seçenekler: 0 Klasik (FD yok) · 1 2 Mbit/s · 2 5 Mbit/s · 3 8 Mbit/s. |
 | 0x0002 | `can.termination` | Hat sonlandırma (120 Ω) | bool |  |  | kapalı | CAN hattı | salt-okunur | Bu kartta anahtarlanabilir sonlandırma yok; değer her zaman kapalıdır. |
 | 0x0003 | `ctrl.timeout_ms` | Komut zaman aşımı | u32 | ms | 20 … 2000 | 200 | Kontrol |  | Bu süre içinde yeni kontrol çerçevesi gelmezse çıkış nötre döner ve uyarı verilir. |
-| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Hızlı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 10 | Durum çerçeveleri |  | Hızlı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Konum ve besleme | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Konum ve besleme çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Kapalı döngü | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Kapalı döngü çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Isıl ve giriş | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Isıl ve giriş çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0014 | `status.4.period_ms` | Durum 4 periyodu · Enerji | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 500 | Durum çerçeveleri |  | Enerji çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Hızlı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Hızlı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Konum ve besleme | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Konum ve besleme çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Kapalı döngü | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Kapalı döngü çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Isıl ve giriş | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 200 | Durum çerçeveleri |  | Isıl ve giriş çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0014 | `status.4.period_ms` | Durum 4 periyodu · Enerji | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 1000 | Durum çerçeveleri |  | Enerji çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 
 ### Sinyaller
 
@@ -148,7 +149,7 @@ DEVTYPE **2** · anahtar `esc20a` · katalog sürümü 1 · akış en küçük p
 
 ### Durum çerçeveleri
 
-**STATUS/0 · Hızlı** — varsayılan periyot 10 ms (`status.0.period_ms`)
+**STATUS/0 · Hızlı** — varsayılan periyot 20 ms (`status.0.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -156,7 +157,7 @@ DEVTYPE **2** · anahtar `esc20a` · katalog sürümü 1 · akış en küçük p
 | 4 |  | i16 | `phase.current` | 0.01 |  | A |
 | 6 |  | i16 | `duty` | 0.0001 |  |  |
 
-**STATUS/1 · Konum ve besleme** — varsayılan periyot 20 ms (`status.1.period_ms`)
+**STATUS/1 · Konum ve besleme** — varsayılan periyot 50 ms (`status.1.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -164,14 +165,14 @@ DEVTYPE **2** · anahtar `esc20a` · katalog sürümü 1 · akış en küçük p
 | 4 |  | u16 | `bus.voltage` | 0.01 |  | V |
 | 6 |  | i16 | `bus.current` | 0.01 |  | A |
 
-**STATUS/2 · Kapalı döngü** — varsayılan periyot 50 ms (`status.2.period_ms`)
+**STATUS/2 · Kapalı döngü** — varsayılan periyot 100 ms (`status.2.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
 | 0 |  | f32 | `setpoint` |  |  |  |
 | 4 |  | f32 | `error` |  |  |  |
 
-**STATUS/3 · Isıl ve giriş** — varsayılan periyot 100 ms (`status.3.period_ms`)
+**STATUS/3 · Isıl ve giriş** — varsayılan periyot 200 ms (`status.3.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -180,7 +181,7 @@ DEVTYPE **2** · anahtar `esc20a` · katalog sürümü 1 · akış en küçük p
 | 4 |  | i16 | `temp.motor` | 0.1 |  | °C |
 | 6 |  | u16 | `pwm.pulse` | 1 |  | µs |
 
-**STATUS/4 · Enerji** — varsayılan periyot 500 ms (`status.4.period_ms`)
+**STATUS/4 · Enerji** — varsayılan periyot 1000 ms (`status.4.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -300,11 +301,11 @@ DEVTYPE **2** · anahtar `esc80a` · katalog sürümü 1 · akış en küçük p
 | 0x0001 | `can.data_bitrate` | FD veri hızı | enum |  |  | 2 Mbit/s | CAN hattı | yeniden başlatma | CAN-FD veri evresinin hızı; Klasik seçilirse kart FD çerçevesi göndermez (roboRIO ve MCP2515 hatları için). Seçenekler: 0 Klasik (FD yok) · 1 2 Mbit/s · 2 5 Mbit/s · 3 8 Mbit/s. |
 | 0x0002 | `can.termination` | Hat sonlandırma (120 Ω) | bool |  |  | kapalı | CAN hattı | salt-okunur | Bu kartta anahtarlanabilir sonlandırma yok; değer her zaman kapalıdır. |
 | 0x0003 | `ctrl.timeout_ms` | Komut zaman aşımı | u32 | ms | 20 … 2000 | 200 | Kontrol |  | Bu süre içinde yeni kontrol çerçevesi gelmezse çıkış nötre döner ve uyarı verilir. |
-| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Hızlı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 10 | Durum çerçeveleri |  | Hızlı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Konum ve besleme | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Konum ve besleme çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Kapalı döngü | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Kapalı döngü çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Isıl ve giriş | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Isıl ve giriş çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0014 | `status.4.period_ms` | Durum 4 periyodu · Enerji | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 500 | Durum çerçeveleri |  | Enerji çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Hızlı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Hızlı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Konum ve besleme | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Konum ve besleme çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Kapalı döngü | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Kapalı döngü çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Isıl ve giriş | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 200 | Durum çerçeveleri |  | Isıl ve giriş çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0014 | `status.4.period_ms` | Durum 4 periyodu · Enerji | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 1000 | Durum çerçeveleri |  | Enerji çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 
 ### Sinyaller
 
@@ -327,7 +328,7 @@ DEVTYPE **2** · anahtar `esc80a` · katalog sürümü 1 · akış en küçük p
 
 ### Durum çerçeveleri
 
-**STATUS/0 · Hızlı** — varsayılan periyot 10 ms (`status.0.period_ms`)
+**STATUS/0 · Hızlı** — varsayılan periyot 20 ms (`status.0.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -335,7 +336,7 @@ DEVTYPE **2** · anahtar `esc80a` · katalog sürümü 1 · akış en küçük p
 | 4 |  | i16 | `phase.current` | 0.01 |  | A |
 | 6 |  | i16 | `duty` | 0.0001 |  |  |
 
-**STATUS/1 · Konum ve besleme** — varsayılan periyot 20 ms (`status.1.period_ms`)
+**STATUS/1 · Konum ve besleme** — varsayılan periyot 50 ms (`status.1.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -343,14 +344,14 @@ DEVTYPE **2** · anahtar `esc80a` · katalog sürümü 1 · akış en küçük p
 | 4 |  | u16 | `bus.voltage` | 0.01 |  | V |
 | 6 |  | i16 | `bus.current` | 0.01 |  | A |
 
-**STATUS/2 · Kapalı döngü** — varsayılan periyot 50 ms (`status.2.period_ms`)
+**STATUS/2 · Kapalı döngü** — varsayılan periyot 100 ms (`status.2.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
 | 0 |  | f32 | `setpoint` |  |  |  |
 | 4 |  | f32 | `error` |  |  |  |
 
-**STATUS/3 · Isıl ve giriş** — varsayılan periyot 100 ms (`status.3.period_ms`)
+**STATUS/3 · Isıl ve giriş** — varsayılan periyot 200 ms (`status.3.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -359,7 +360,7 @@ DEVTYPE **2** · anahtar `esc80a` · katalog sürümü 1 · akış en küçük p
 | 4 |  | i16 | `temp.motor` | 0.1 |  | °C |
 | 6 |  | u16 | `pwm.pulse` | 1 |  | µs |
 
-**STATUS/4 · Enerji** — varsayılan periyot 500 ms (`status.4.period_ms`)
+**STATUS/4 · Enerji** — varsayılan periyot 1000 ms (`status.4.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -440,7 +441,7 @@ DEVTYPE **7** · anahtar `cyncoder` · katalog sürümü 1 · akış en küçük
 | 0x0001 | `can.data_bitrate` | FD veri hızı | enum |  |  | 2 Mbit/s | CAN hattı | yeniden başlatma | CAN-FD veri evresinin hızı; Klasik seçilirse kart FD çerçevesi göndermez (roboRIO ve MCP2515 hatları için). Seçenekler: 0 Klasik (FD yok) · 1 2 Mbit/s · 2 5 Mbit/s · 3 8 Mbit/s. |
 | 0x0002 | `can.termination` | Hat sonlandırma (120 Ω) | bool |  |  | kapalı | CAN hattı | salt-okunur | Bu kartta anahtarlanabilir sonlandırma yok; değer her zaman kapalıdır. |
 | 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Konum ve hız | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 10 | Durum çerçeveleri |  | Konum ve hız çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Mutlak ve mıknatıs | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Mutlak ve mıknatıs çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Mutlak ve mıknatıs | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Mutlak ve mıknatıs çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 
 ### Sinyaller
 
@@ -463,7 +464,7 @@ DEVTYPE **7** · anahtar `cyncoder` · katalog sürümü 1 · akış en küçük
 | 0 |  | f32 | `position` |  |  | rot |
 | 4 |  | f32 | `velocity` |  |  | rpm |
 
-**STATUS/1 · Mutlak ve mıknatıs** — varsayılan periyot 20 ms (`status.1.period_ms`)
+**STATUS/1 · Mutlak ve mıknatıs** — varsayılan periyot 100 ms (`status.1.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -525,9 +526,9 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 0x0001 | `can.data_bitrate` | FD veri hızı | enum |  |  | 2 Mbit/s | CAN hattı | yeniden başlatma | CAN-FD veri evresinin hızı; Klasik seçilirse kart FD çerçevesi göndermez (roboRIO ve MCP2515 hatları için). Seçenekler: 0 Klasik (FD yok) · 1 2 Mbit/s · 2 5 Mbit/s · 3 8 Mbit/s. |
 | 0x0002 | `can.termination` | Hat sonlandırma (120 Ω) | bool |  |  | kapalı | CAN hattı | salt-okunur | Bu kartta anahtarlanabilir sonlandırma yok; değer her zaman kapalıdır. |
 | 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Yönelim | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 10 | Durum çerçeveleri |  | Yönelim çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Açısal hız | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 10 | Durum çerçeveleri |  | Açısal hız çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · İvme | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | İvme çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Kuaterniyon | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Kuaterniyon çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Açısal hız | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Açısal hız çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · İvme | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | İvme çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Kuaterniyon | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Kuaterniyon çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 
 ### Sinyaller
 
@@ -559,7 +560,7 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 4 |  | i16 | `pitch` | 0.01 |  | ° |
 | 6 |  | i16 | `roll` | 0.01 |  | ° |
 
-**STATUS/1 · Açısal hız** — varsayılan periyot 10 ms (`status.1.period_ms`)
+**STATUS/1 · Açısal hız** — varsayılan periyot 20 ms (`status.1.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -569,7 +570,7 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 6 | 0..1 | u8 | `cal.status` | 1 |  |  |
 | 7 |  | i8 | `temp` | 1 |  | °C |
 
-**STATUS/2 · İvme** — varsayılan periyot 20 ms (`status.2.period_ms`)
+**STATUS/2 · İvme** — varsayılan periyot 50 ms (`status.2.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -577,7 +578,7 @@ DEVTYPE **4** · anahtar `gyro` · katalog sürümü 1 · akış en küçük per
 | 2 |  | i16 | `accel.y` | 0.001 |  | g |
 | 4 |  | i16 | `accel.z` | 0.001 |  | g |
 
-**STATUS/3 · Kuaterniyon** — varsayılan periyot 20 ms (`status.3.period_ms`)
+**STATUS/3 · Kuaterniyon** — varsayılan periyot 50 ms (`status.3.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -877,7 +878,7 @@ DEVTYPE **12** · anahtar `sealed_servo` · katalog sürümü 1 · akış en kü
 | 0x0001 | `can.data_bitrate` | FD veri hızı | enum |  |  | 2 Mbit/s | CAN hattı | yeniden başlatma | CAN-FD veri evresinin hızı; Klasik seçilirse kart FD çerçevesi göndermez (roboRIO ve MCP2515 hatları için). Seçenekler: 0 Klasik (FD yok) · 1 2 Mbit/s · 2 5 Mbit/s · 3 8 Mbit/s. |
 | 0x0002 | `can.termination` | Hat sonlandırma (120 Ω) | bool |  |  | kapalı | CAN hattı | salt-okunur | Bu kartta anahtarlanabilir sonlandırma yok; değer her zaman kapalıdır. |
 | 0x0003 | `ctrl.timeout_ms` | Komut zaman aşımı | u32 | ms | 20 … 2000 | 200 | Kontrol |  | Bu süre içinde yeni kontrol çerçevesi gelmezse çıkış nötre döner ve uyarı verilir. |
-| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Hızlı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 10 | Durum çerçeveleri |  | Hızlı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Hızlı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Hızlı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 | 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Kapalı döngü | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Kapalı döngü çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 | 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Güç ve ısı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Güç ve ısı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 
@@ -897,7 +898,7 @@ DEVTYPE **12** · anahtar `sealed_servo` · katalog sürümü 1 · akış en kü
 
 ### Durum çerçeveleri
 
-**STATUS/0 · Hızlı** — varsayılan periyot 10 ms (`status.0.period_ms`)
+**STATUS/0 · Hızlı** — varsayılan periyot 20 ms (`status.0.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -1048,10 +1049,10 @@ DEVTYPE **8** · anahtar `pdh_large` · katalog sürümü 1 · akış en küçü
 | 0x0121 | `aux.12v_enable` | 12 V yardımcı çıkış etkin | bool |  |  | açık | Yardımcı çıkışlar |  | 12 V · 1 A yardımcı çıkışı açar veya kapatır. |
 | 0x0001 | `can.data_bitrate` | FD veri hızı | enum |  |  | 2 Mbit/s | CAN hattı | yeniden başlatma | CAN-FD veri evresinin hızı; Klasik seçilirse kart FD çerçevesi göndermez (roboRIO ve MCP2515 hatları için). Seçenekler: 0 Klasik (FD yok) · 1 2 Mbit/s · 2 5 Mbit/s · 3 8 Mbit/s. |
 | 0x0002 | `can.termination` | Hat sonlandırma (120 Ω) | bool |  |  | kapalı | CAN hattı |  | Kart hattın ucundaysa açın; hatta tam iki sonlandırma olmalıdır. |
-| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Kanal 1–4 akımı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Kanal 1–4 akımı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Kanal 5–8 akımı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 20 | Durum çerçeveleri |  | Kanal 5–8 akımı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Toplam | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Toplam çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
-| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Yardımcı raylar | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 200 | Durum çerçeveleri |  | Yardımcı raylar çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0010 | `status.0.period_ms` | Durum 0 periyodu · Kanal 1–4 akımı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Kanal 1–4 akımı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0011 | `status.1.period_ms` | Durum 1 periyodu · Kanal 5–8 akımı | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 50 | Durum çerçeveleri |  | Kanal 5–8 akımı çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0012 | `status.2.period_ms` | Durum 2 periyodu · Toplam | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 100 | Durum çerçeveleri |  | Toplam çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
+| 0x0013 | `status.3.period_ms` | Durum 3 periyodu · Yardımcı raylar | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 500 | Durum çerçeveleri |  | Yardımcı raylar çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 | 0x0014 | `status.4.period_ms` | Durum 4 periyodu · Enerji | u32 | ms | 0 … 60000 (0 = kapalı, en az 5) | 1000 | Durum çerçeveleri |  | Enerji çerçevesinin gönderim aralığı; 0 çerçeveyi kapatır, en az 5 ms. |
 
 ### Sinyaller
@@ -1079,7 +1080,7 @@ DEVTYPE **8** · anahtar `pdh_large` · katalog sürümü 1 · akış en küçü
 
 ### Durum çerçeveleri
 
-**STATUS/0 · Kanal 1–4 akımı** — varsayılan periyot 20 ms (`status.0.period_ms`)
+**STATUS/0 · Kanal 1–4 akımı** — varsayılan periyot 50 ms (`status.0.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -1088,7 +1089,7 @@ DEVTYPE **8** · anahtar `pdh_large` · katalog sürümü 1 · akış en küçü
 | 4 |  | u16 | `ch.3.current` | 0.01 |  | A |
 | 6 |  | u16 | `ch.4.current` | 0.01 |  | A |
 
-**STATUS/1 · Kanal 5–8 akımı** — varsayılan periyot 20 ms (`status.1.period_ms`)
+**STATUS/1 · Kanal 5–8 akımı** — varsayılan periyot 50 ms (`status.1.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -1097,7 +1098,7 @@ DEVTYPE **8** · anahtar `pdh_large` · katalog sürümü 1 · akış en küçü
 | 4 |  | u16 | `ch.7.current` | 0.01 |  | A |
 | 6 |  | u16 | `ch.8.current` | 0.01 |  | A |
 
-**STATUS/2 · Toplam** — varsayılan periyot 50 ms (`status.2.period_ms`)
+**STATUS/2 · Toplam** — varsayılan periyot 100 ms (`status.2.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|
@@ -1107,7 +1108,7 @@ DEVTYPE **8** · anahtar `pdh_large` · katalog sürümü 1 · akış en küçü
 | 6 |  | u8 | `fuse.mask` | 1 |  |  |
 | 7 |  | i8 | `temp` | 1 |  | °C |
 
-**STATUS/3 · Yardımcı raylar** — varsayılan periyot 200 ms (`status.3.period_ms`)
+**STATUS/3 · Yardımcı raylar** — varsayılan periyot 500 ms (`status.3.period_ms`)
 
 | Bayt | Bit | Tip | Sinyal | Ölçek | Sapma | Birim |
 |---|---|---|---|---|---|---|

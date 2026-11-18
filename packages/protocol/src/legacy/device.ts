@@ -499,6 +499,9 @@ export class CyncoderV3Device implements DeviceHandle {
   loadDefaults(): Promise<void> {
     return rejectUnsupported('params');
   }
+  loadSaved(): Promise<void> {
+    return rejectUnsupported('params');
+  }
   rename(_name: string): Promise<void> {
     return rejectUnsupported('rename');
   }

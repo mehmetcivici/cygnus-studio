@@ -80,7 +80,7 @@ export const CYNCODER: ModelDef = defineModel({
     {
       index: 1,
       label: tx(['Mutlak ve mıknatıs', 'Absolute and magnet']),
-      defaultPeriodMs: 20,
+      defaultPeriodMs: 100,
       fields: [
         { signal: 'abs.position', byte: 0, type: 'f32' },
         { signal: 'raw.angle', byte: 4, type: 'u16', bit: 0, bits: 12 },

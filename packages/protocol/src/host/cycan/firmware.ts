@@ -1,4 +1,5 @@
 import { Command, DataBitrate, DeviceState, FW_CHUNK_CLASSIC, FW_CHUNK_FD, FW_WINDOW_DEFAULT, FwStatus } from '../../core/constants';
+import { CYFW_HEADER_SIZE } from '../../core/cyfw';
 import { type CyfwHeader, validateCyfw } from '../../core/cyfw';
 import { type FwAck, encodeFwBegin, encodeFwData, encodeFwEnd } from '../../core/messages';
 import { CyError, isCyError } from '../errors';
@@ -16,6 +17,10 @@ import type { CyCanDevice } from './device';
 export const FirmwareTiming = {
   /** Reboot into the bootloader until its first heartbeat. */
   ENTER_MS: 5000,
+  /** ENTER_BOOTLOADER that drew no answer: wait this long for the bootloader before sending it again. */
+  ENTER_RETRY_MS: 1000,
+  /** ENTER_BOOTLOADER attempts. */
+  ENTER_ATTEMPTS: 3,
   /** BEGIN until an OK ACK (flash erase may answer BUSY meanwhile). */
   ERASE_MS: 15000,
   /** A window of DATA frames (or END) until its ACK. */
@@ -94,19 +99,23 @@ export class CyCanFirmware implements DeviceFirmware {
     const progress = new ProgressReporter(image.length, opts.onProgress);
     try {
       progress.phase('validate', 0);
+      const chunk = await this.chunkSize(opts.chunk);
+      this.checkAbort();
       if (!dev.bootloader) {
         progress.phase('enterBootloader', 0);
-        try {
-          await dev.commandRaw(Command.ENTER_BOOTLOADER, 0, { attempts: 1 });
-        } catch (e) {
-          // The board may reboot before its answer leaves; the heartbeat below is the real check.
-          if (!isCyError(e, 'TIMEOUT')) throw e;
-        }
-        this.checkAbort();
-        await this.waitState(() => dev.online && dev.state === DeviceState.BOOTLOADER, FirmwareTiming.ENTER_MS, 'bootloader');
+        await this.enterBootloader();
       }
       progress.phase('erase', W_ENTER);
-      const rewinds = await this.transfer(image, v.fileCrc32, this.chunkSize(opts.chunk), progress);
+      let rewinds: number;
+      try {
+        rewinds = await this.transfer(image, v.fileCrc32, chunk, progress);
+      } catch (e) {
+        // BAD_IMAGE comes before anything is erased: restart the untouched application.
+        if (isCyError(e, 'REJECTED') && e.statusKind === 'fw' && e.status === FwStatus.BAD_IMAGE) {
+          dev.commandRaw(Command.REBOOT, 0, { attempts: 1 }).catch(() => undefined);
+        }
+        throw e;
+      }
       progress.phase('verify', W_ENTER + W_ERASE + W_TRANSFER);
       await this.waitState(
         () => dev.online && dev.state !== DeviceState.BOOTLOADER && dev.state !== DeviceState.BOOT && dev.fw !== null,
@@ -132,35 +141,99 @@ export class CyCanFirmware implements DeviceFirmware {
     }
   }
 
-  private chunkSize(pref: FirmwareUpdateOptions['chunk'] = 'auto'): number {
+  /**
+   * ENTER_BOOTLOADER with its intent argument (PROTOCOL §4.5). An unanswered request is sent
+   * again: the command or its answer may be lost, and a board that did reboot shows up as a
+   * bootloader heartbeat soon after. DENIED (driven, ESTOP) and other refusals end the update.
+   */
+  private async enterBootloader(): Promise<void> {
+    const dev = this.dev;
+    const inBootloader = (): boolean => dev.online && dev.state === DeviceState.BOOTLOADER;
+    for (let attempt = 1; ; attempt++) {
+      let answered = true;
+      try {
+        await dev.commandRaw(Command.ENTER_BOOTLOADER, dev.enterBootloaderArg, { attempts: 1 });
+      } catch (e) {
+        if (!isCyError(e, 'TIMEOUT')) throw e;
+        answered = false;
+      }
+      this.checkAbort();
+      const last = answered || attempt >= FirmwareTiming.ENTER_ATTEMPTS;
+      try {
+        await this.waitState(inBootloader, last ? FirmwareTiming.ENTER_MS : FirmwareTiming.ENTER_RETRY_MS, 'bootloader');
+        return;
+      } catch (e) {
+        if (last || !isCyError(e, 'TIMEOUT')) throw e;
+      }
+    }
+  }
+
+  /**
+   * DATA chunk: every frame but the last carries a full chunk whose length + 3 is a valid frame
+   * length (classic 8, FD 64; PROTOCOL §9). The bootloader runs at the board's saved
+   * `can.data_bitrate`; when that is unknown the classic chunk is used, which every board accepts.
+   */
+  private async chunkSize(pref: FirmwareUpdateOptions['chunk'] = 'auto'): Promise<number> {
     if (pref === 'fd') return FW_CHUNK_FD;
     if (pref === 'classic') return FW_CHUNK_CLASSIC;
-    const fd = this.dev.ctx.transportFd && this.dev.cachedParam('can.data_bitrate') !== DataBitrate.CLASSIC;
-    return fd ? FW_CHUNK_FD : FW_CHUNK_CLASSIC;
+    const dev = this.dev;
+    if (!dev.ctx.transportFd) return FW_CHUNK_CLASSIC;
+    let rate = dev.cachedParam('can.data_bitrate');
+    if (rate === undefined && !dev.bootloader && dev.capabilities.params) {
+      rate = await dev.getParam('can.data_bitrate').catch(() => undefined);
+    }
+    return rate !== undefined && rate !== DataBitrate.CLASSIC ? FW_CHUNK_FD : FW_CHUNK_CLASSIC;
   }
 
   private async transfer(image: Uint8Array, crc: number, chunk: number, progress: ProgressReporter): Promise<number> {
     const dev = this.dev;
     const size = image.length;
-    // BEGIN: BUSY answers while the flash erases, OK when ready.
     let window = FW_WINDOW_DEFAULT;
-    this.acks.length = 0;
-    dev.send(encodeFwBegin(dev.address, { size, crc32: crc }));
-    const eraseDeadline = dev.ctx.scheduler.now() + FirmwareTiming.ERASE_MS;
-    for (;;) {
-      const ack = await this.nextAck(Math.max(1, eraseDeadline - dev.ctx.scheduler.now()));
-      if (!ack) throw new CyError('TIMEOUT', 'bootloader did not answer BEGIN');
-      if (ack.status === FwStatus.BUSY) continue;
-      this.throwIfBad(ack, [FwStatus.OK]);
-      if (ack.window > 0) window = ack.window;
-      break;
-    }
-
-    progress.phase('transfer', W_ENTER + W_ERASE);
     let offset = 0; // next byte to send
     let confirmed = 0; // acknowledged by the board
     let rewinds = 0;
     let timeouts = 0;
+    const sendData = (): void => {
+      const n = Math.min(chunk, size - offset);
+      dev.send(encodeFwData(dev.address, { offset, bytes: image.subarray(offset, offset + n) }));
+      offset += n;
+    };
+    /** Follows the board to `to` after an ACK that is not an error (erase done, BUSY over). */
+    const resume = (ack: FwAck): void => {
+      if (ack.window > 0) window = ack.window;
+      offset = confirmed = Math.min(ack.nextOffset, size);
+      progress.update(confirmed, rewinds);
+    };
+
+    // BEGIN: the board answers OK without erasing (an older bootloader erases first: BUSY, then OK).
+    this.acks.length = 0;
+    dev.send(encodeFwBegin(dev.address, { size, crc32: crc }));
+    const begun = await this.ackAfterBusy(FirmwareTiming.ERASE_MS);
+    if (!begun) throw new CyError('TIMEOUT', 'bootloader did not answer BEGIN');
+    this.throwIfBad(begun, [FwStatus.OK]);
+    if (begun.window > 0) window = begun.window;
+
+    // Header: the board checks it before erasing and answers BUSY while it erases, then OK with
+    // the offset to continue from; BAD_IMAGE leaves the installed application untouched.
+    const headerFrames = Math.min(window, Math.ceil(Math.min(CYFW_HEADER_SIZE, size) / chunk));
+    for (let i = 0; i < headerFrames; i++) sendData();
+    const erased = await this.nextAck(FirmwareTiming.ACK_MS);
+    this.checkAbort();
+    // No answer: a bootloader that erased at BEGIN only acknowledges full windows, and the
+    // header frames count towards its first one.
+    let carried = erased ? 0 : headerFrames;
+    if (erased) {
+      const ready = erased.status === FwStatus.BUSY ? await this.ackAfterBusy(FirmwareTiming.ERASE_MS) : erased;
+      if (!ready) throw new CyError('TIMEOUT', 'bootloader did not finish erasing');
+      this.throwIfBad(ready, [FwStatus.OK, FwStatus.BAD_OFFSET]);
+      if (ready.status === FwStatus.OK) resume(ready);
+      else {
+        offset = confirmed = Math.min(ready.nextOffset, size);
+        rewinds++;
+      }
+    }
+    progress.phase('transfer', W_ENTER + W_ERASE);
+
     const rewind = async (to: number): Promise<void> => {
       if (++rewinds > FirmwareTiming.MAX_REWINDS) throw new CyError('TIMEOUT', 'too many retransmissions');
       // Let ACKs for frames already on the wire arrive, then trust the newest target.
@@ -176,16 +249,22 @@ export class CyCanFirmware implements DeviceFirmware {
 
     for (;;) {
       this.checkAbort();
-      // One window of DATA frames; the last window may be short and is closed by END.
-      let frames = 0;
+      if (offset >= size) {
+        // Everything is on the wire; END's ACK also closes the last, short window.
+        progress.phase('finish', W_ENTER + W_ERASE + W_TRANSFER);
+        const missing = await this.end();
+        if (missing === null) return rewinds;
+        await rewind(missing);
+        continue;
+      }
+      let frames = carried;
+      carried = 0;
       while (frames < window && offset < size) {
-        const n = Math.min(chunk, size - offset);
-        dev.send(encodeFwData(dev.address, { offset, bytes: image.subarray(offset, offset + n) }));
-        offset += n;
+        sendData();
         frames++;
       }
-      const ending = offset >= size && frames < window;
-      if (ending) dev.send(encodeFwEnd(dev.address));
+      // A short window gets no ACK of its own; END follows right away.
+      if (frames < window) continue;
       const ack = await this.nextAck(FirmwareTiming.ACK_MS);
       this.checkAbort();
       if (!ack) {
@@ -200,14 +279,16 @@ export class CyCanFirmware implements DeviceFirmware {
         continue;
       }
       if (ack.status === FwStatus.BUSY) {
-        await rewind(confirmed);
+        // Flash work in the middle of the transfer: frames sent meanwhile were dropped; the
+        // board says where to continue once it is ready.
+        const ready = await this.ackAfterBusy(FirmwareTiming.ERASE_MS);
+        if (!ready) throw new CyError('TIMEOUT', 'bootloader stayed busy');
+        this.throwIfBad(ready, [FwStatus.OK, FwStatus.BAD_OFFSET]);
+        this.acks.length = 0;
+        resume(ready);
         continue;
       }
       this.throwIfBad(ack, [FwStatus.OK]);
-      if (ending) {
-        progress.update(size, rewinds);
-        return rewinds;
-      }
       confirmed = Math.min(ack.nextOffset, size);
       if (confirmed !== offset) {
         // The board counted fewer bytes than we sent without flagging BAD_OFFSET; follow it.
@@ -215,19 +296,41 @@ export class CyCanFirmware implements DeviceFirmware {
         continue;
       }
       progress.update(confirmed, rewinds);
-      if (offset >= size) {
-        // The image ended exactly on a window boundary: END gets its own ACK.
-        progress.phase('finish', W_ENTER + W_ERASE + W_TRANSFER);
-        dev.send(encodeFwEnd(dev.address));
-        const end = await this.nextAck(FirmwareTiming.ACK_MS * 4);
-        if (!end) throw new CyError('TIMEOUT', 'bootloader did not answer END');
-        if (end.status === FwStatus.BAD_OFFSET) {
-          await rewind(end.nextOffset);
-          continue;
-        }
-        this.throwIfBad(end, [FwStatus.OK]);
-        return rewinds;
+    }
+  }
+
+  /**
+   * Sends END until it is acknowledged. Returns null when the image is complete — the ACK said
+   * OK, or the board is already verifying (BUSY) or has left the transfer (WRONG_STATE), or END
+   * kept going unanswered; the application heartbeat's version decides in all those cases
+   * (PROTOCOL §9). Returns the offset to resend from on BAD_OFFSET.
+   */
+  private async end(): Promise<number | null> {
+    const dev = this.dev;
+    for (let attempt = 0; attempt <= FirmwareTiming.ACK_RETRIES; attempt++) {
+      dev.send(encodeFwEnd(dev.address));
+      const ack = await this.nextAck(FirmwareTiming.ACK_MS * 4);
+      this.checkAbort();
+      if (!ack) {
+        dev.ctx.countRequestTimeout();
+        continue;
       }
+      if (ack.status === FwStatus.BAD_OFFSET) return ack.nextOffset;
+      if (ack.status === FwStatus.BUSY || ack.status === FwStatus.WRONG_STATE) return null;
+      this.throwIfBad(ack, [FwStatus.OK]);
+      return null;
+    }
+    return null;
+  }
+
+  /** Next ACK that is not BUSY, waiting at most `timeoutMs` in total. */
+  private async ackAfterBusy(timeoutMs: number): Promise<FwAck | null> {
+    const s = this.dev.ctx.scheduler;
+    const deadline = s.now() + timeoutMs;
+    for (;;) {
+      const ack = await this.nextAck(Math.max(1, deadline - s.now()));
+      this.checkAbort();
+      if (!ack || ack.status !== FwStatus.BUSY) return ack;
     }
   }
 
@@ -313,6 +416,7 @@ class ProgressReporter {
   private current: FirmwarePhase = 'validate';
   private base = 0;
   private rewinds = 0;
+  private last = 0;
 
   constructor(
     private readonly total: number,
@@ -337,6 +441,8 @@ class ProgressReporter {
   }
 
   private emit(sent: number, fraction: number): void {
-    this.cb?.({ phase: this.current, sent, total: this.total, fraction: Math.max(this.base, fraction), rewinds: this.rewinds });
+    // Never backwards: the header may be confirmed before the transfer phase starts.
+    this.last = Math.max(this.last, this.base, fraction);
+    this.cb?.({ phase: this.current, sent, total: this.total, fraction: this.last, rewinds: this.rewinds });
   }
 }

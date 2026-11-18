@@ -119,12 +119,47 @@ export type ControlFields =
   | { pulsesUs: readonly number[] }
   | { line: number; col: number; text: string };
 
+/**
+ * Why a control session ended. `stopped` is the owner's own `stop()`; every other reason is
+ * the host ending the session on its own (PROTOCOL §7: the host stops driving a board whose
+ * ENABLED bit drops, that reports BOOT/ESTOP/FAULT or whose number changes).
+ */
+export type ControlStopReason =
+  /** `stop()` by the owner, or the bus was stopped by the user (neutral sent). */
+  | 'stopped'
+  /** `bus.estop()`. */
+  | 'estop'
+  /** The board reports ESTOP (sent by another node, e.g. a roboRIO or a second Studio). */
+  | 'boardEstop'
+  /** The board restarted (heartbeat `state = BOOT`). */
+  | 'boardReset'
+  /** The board reports FAULT. */
+  | 'boardFault'
+  /** The board is in its bootloader. */
+  | 'bootloader'
+  /** The board's ENABLED bit dropped while it was being driven (CTRL timeout, fault, …). */
+  | 'disabled'
+  /** The board's number changed; the old address got a neutral command. */
+  | 'renumbered'
+  /** The board went into CONFLICT or lost its number. */
+  | 'unresolved'
+  /** No heartbeat for 1.5 s. */
+  | 'lost'
+  /** The transport closed or the bus stopped. */
+  | 'disconnected';
+
+export type ControlStopCallback = (reason: ControlStopReason) => void;
+
 export interface ControlLoop {
   readonly active: boolean;
+  /** Why the session ended; null while it runs. */
+  readonly stopReason: ControlStopReason | null;
   update(value: number): void;
   setMode(mode: number | string, value?: number): void;
   /** Stops the device's control session and sends neutral commands. */
   stop(): void;
+  /** Called once when the session ends, with the reason (also when it already ended). */
+  onStopped(cb: ControlStopCallback): () => void;
 }
 
 export interface DeviceControl {
@@ -132,10 +167,17 @@ export interface DeviceControl {
   readonly active: boolean;
   /** Repeat period of the running session, ms. */
   readonly periodMs: number;
-  /** One-shot `set`-format command (the board times out after `ctrl.timeout_ms`). */
+  /**
+   * One-shot `set`-format command (the board times out after `ctrl.timeout_ms`). Unless a
+   * session already drives that frame, a neutral command goes first (PROTOCOL §7 neutral-first rule).
+   */
   set(mode: number | string, value: number): void;
-  /** Starts (or retargets) the periodic session with a `set`-format command. */
-  start(mode: number | string, value: number, opts?: { rateHz?: number }): ControlLoop;
+  /**
+   * Starts (or retargets) the periodic session with a `set`-format command. A new session
+   * sends a neutral command first, then the target; every frame is encoded with the board's
+   * current address.
+   */
+  start(mode: number | string, value: number, opts?: { rateHz?: number; onStopped?: ControlStopCallback }): ControlLoop;
   /** Any catalog control frame by key; with `repeat` it joins the periodic session. */
   send(controlKey: string, fields: ControlFields, opts?: { repeat?: boolean; rateHz?: number }): void;
   /** Ends the session and sends neutral commands for every frame it carried. */
@@ -206,8 +248,10 @@ export interface DeviceEvents {
   /** Identity, state, flags, faults, number, name or online status changed. */
   changed: DeviceHandle;
   paramChanged: { key: string; value: number };
-  /** Cached parameter values are stale (after LOAD_DEFAULTS or a reboot). */
+  /** Cached parameter values are stale (after LOAD_DEFAULTS, LOAD_SAVED or a reboot). */
   paramsInvalidated: DeviceHandle;
+  /** The periodic control session ended (any reason, including the owner's `stop()`). */
+  controlStopped: { reason: ControlStopReason };
 }
 
 /** Driver-independent view of one board. Identity is `uid48`; the number may change. */
@@ -251,6 +295,8 @@ export interface DeviceHandle {
   readAllParams(opts?: { onProgress?: (p: ReadAllProgress) => void; window?: number }): Promise<ReadAllResult>;
   save(): Promise<void>;
   loadDefaults(): Promise<void>;
+  /** Reloads the saved parameters into RAM (discards unsaved changes); the cache is dropped. */
+  loadSaved(): Promise<void>;
   rename(name: string): Promise<void>;
 
   readonly signals: Readonly<Record<string, number>>;
@@ -275,9 +321,16 @@ export type DeviceEventKind = 'deviceAdded' | 'deviceChanged' | 'deviceLost' | '
 /** What a driver may use from the bus. */
 export interface DriverContext {
   readonly scheduler: Scheduler;
-  /** The transport can carry CAN-FD frames. */
+  /** The transport can carry CAN-FD frames (read live: an adapter may fall back to classic when opening). */
   readonly transportFd: boolean;
   isOpen(): boolean;
+  /**
+   * Estimated bus load, fraction of the nominal rate: the last measured window plus the
+   * streams committed since then (PROTOCOL §10.1).
+   */
+  estimatedLoad(): number;
+  /** Adds (or with a negative value removes) the estimated load of a stream. */
+  commitStreamLoad(delta: number): void;
   send(frame: TxFrame): void;
   emitDevice(kind: DeviceEventKind, device: DeviceHandle): void;
   countRequestTimeout(): void;

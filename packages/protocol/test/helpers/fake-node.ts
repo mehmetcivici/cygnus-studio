@@ -3,29 +3,37 @@ import type { ModelDef } from '../../src/catalog/schema';
 import { encodeStatusFrame } from '../../src/catalog/status';
 import { checkParamValue, quantizeParamValue } from '../../src/catalog/values';
 import {
+  BOOT_HEARTBEAT_MAX_MS,
   Cls,
   Command,
   CommandStatus,
   DeviceState,
+  ENTER_BOOTLOADER_INTENT,
+  ESTOP_MAGIC_0,
+  ESTOP_MAGIC_1,
   FW_WINDOW_DEFAULT,
+  FaultBit,
   FwReq,
   FwStatus,
   InfoPage,
   NUM_UNASSIGNED,
   ParamReq,
   ParamStatus,
+  RECOVERY_STAY_MAGIC,
+  RECOVERY_WINDOW_MS,
   StreamReq,
   SysReq,
   SysRsp,
 } from '../../src/core/constants';
 import { crc32 } from '../../src/core/crc32';
-import { decodeCyfwHeader } from '../../src/core/cyfw';
+import { CYFW_HEADER_SIZE, decodeCyfwHeader } from '../../src/core/cyfw';
 import { deriveUid } from '../../src/core/fnv';
 import type { Address, CanFrame, TxFrame } from '../../src/core/frame';
 import { acceptsFrame, idClass, idDevType, idIndex, idNum, isCyCanId } from '../../src/core/id';
 import {
   decodeAssignId,
   decodeCommand,
+  decodeCtrlServo,
   decodeCtrlSet,
   decodeEnumReq,
   decodeFwBegin,
@@ -92,8 +100,10 @@ export function uidFromSeed(seed: number): Uint8Array {
 
 /**
  * Scripted CyCAN board following docs/PROTOCOL.md closely enough to exercise the host:
- * discovery with UID-derived delays, conflict detection, INFO, params, commands, faults,
- * STATUS, streaming (FD and classic) and a bootloader with windowed firmware transfer.
+ * discovery with UID-derived delays, conflict detection, BOOT heartbeat, INFO, params,
+ * commands (DENIED while driven or in ESTOP, ENTER_BOOTLOADER intent), faults, STATUS,
+ * streaming (FD and classic), CTRL with the neutral-first rule and timeout, and a bootloader
+ * with a recovery window, header check before erase and windowed firmware transfer.
  */
 export class FakeNode implements BusNode {
   readonly def: ModelDef;
@@ -119,8 +129,13 @@ export class FakeNode implements BusNode {
   signalValues: Record<string, number> = {};
   persistedNum: number | null = null;
   received: CanFrame[] = [];
-  ctrl: Array<{ t: number; frame: CanFrame }> = [];
+  /** Every CTRL frame addressed to this board; `accepted` when it drove (or neutralised) the board. */
+  ctrl: Array<{ t: number; frame: CanFrame; accepted: boolean }> = [];
   powered = true;
+  /** Neutral-first rule: a neutral command was seen since the last forced neutral. */
+  armed = false;
+  /** Last accepted non-neutral command, e.g. `{ mode: 1, value: 0.3 }`. */
+  target: { mode: number; value: number } | null = null;
 
   // Scripting hooks
   /** Drop the next N PARAM GET requests (to test retries). */
@@ -137,10 +152,21 @@ export class FakeNode implements BusNode {
   fwDropOffsetOnce: number | null = null;
   /** Flip a byte at this offset as it is received (BAD_CRC test). */
   fwCorruptOffset: number | null = null;
+  /** Erase time after the header was accepted (the board answers BUSY meanwhile). */
   fwBeginBusyMs = 30;
   fwWindow = FW_WINDOW_DEFAULT;
   /** Version the board reports after flashing; null = take it from the image header. */
   fwVersionAfterUpdate: [number, number, number] | null = null;
+  /** Go BUSY for `ms` when DATA reaches this offset, then continue (flash work mid-transfer). */
+  fwBusyAt: { offset: number; ms: number } | null = null;
+  /** Drop the ACK to the next N END frames (END-ACK loss test). */
+  fwDropEndAcks = 0;
+  /** Drop the next N COMMAND_RSP frames for ENTER_BOOTLOADER (the command is still carried out). */
+  dropEnterBootloaderRsp = 0;
+  /** Ignore the next N ENTER_BOOTLOADER commands entirely. */
+  ignoreEnterBootloader = 0;
+  /** The application never comes up (crashes at start); only the recovery window can catch the board. */
+  appBroken = false;
 
   private timers = new Set<unknown>();
   private hbTimer: unknown = undefined;
@@ -157,7 +183,10 @@ export class FakeNode implements BusNode {
   private fwCrc = 0;
   private fwExpected = 0;
   private fwCount = 0;
-  private fwReady = false;
+  /** 'header': collecting the 64-byte header · 'erase': BUSY · 'data' · 'verify': after END. */
+  private fwPhase: 'idle' | 'header' | 'erase' | 'data' | 'verify' = 'idle';
+  private ctrlTimer: unknown = undefined;
+  private recoveryUntil = -1;
 
   constructor(
     private readonly bus: FakeBus,
@@ -214,11 +243,57 @@ export class FakeNode implements BusNode {
     this.stopTimers();
   }
 
+  /**
+   * Power returns: RAM is reset. The bootloader listens for the recovery beacon first
+   * (PROTOCOL §9.0), then the application starts with a BOOT heartbeat (§4.1).
+   */
   powerOn(): void {
     this.powered = true;
-    this.state = this.inBootloader ? DeviceState.BOOTLOADER : DeviceState.IDLE;
+    this.resetRam();
+    if (this.inBootloader) {
+      this.startHeartbeat();
+      return;
+    }
+    this.state = DeviceState.BOOT;
+    this.recoveryUntil = this.sched.now() + RECOVERY_WINDOW_MS;
+    this.later(RECOVERY_WINDOW_MS, () => {
+      this.recoveryUntil = -1;
+      if (this.inBootloader) return;
+      this.startApp();
+    });
+  }
+
+  private resetRam(): void {
+    this.params = new Map(this.saved);
+    this.unsaved = false;
+    this.disarm();
     this.slots = [];
-    this.startHeartbeat();
+    this.conflict = false;
+    this.fwPhase = 'idle';
+    this.fwBuf = null;
+  }
+
+  /** Application start: first heartbeat (state BOOT) within 100 ms, then the usual 2 Hz. */
+  private startApp(): void {
+    if (this.appBroken) {
+      this.state = DeviceState.BOOT;
+      return;
+    }
+    this.state = DeviceState.BOOT;
+    this.later(Math.min(BOOT_HEARTBEAT_MAX_MS, 20 + (this.uid48 % 51)), () => {
+      if (this.resolved) this.send(this.heartbeatFrame());
+      this.state = DeviceState.IDLE;
+      this.startHeartbeat();
+    });
+  }
+
+  /** Forces the actuator neutral; it needs a neutral command before it drives again. */
+  private disarm(): void {
+    this.enabled = false;
+    this.armed = false;
+    this.target = null;
+    this.cancel(this.ctrlTimer);
+    this.ctrlTimer = undefined;
   }
 
   /** Detaches from the bus and cancels every timer. */
@@ -253,6 +328,7 @@ export class FakeNode implements BusNode {
     this.timers.clear();
     this.hbTimer = undefined;
     this.streamTimer = undefined;
+    this.ctrlTimer = undefined;
     this.statusTimers = [];
   }
 
@@ -314,7 +390,19 @@ export class FakeNode implements BusNode {
       const hb = decodeHeartbeat(d);
       if (hb && hb.uid16 !== this.uid16 && this.num !== NUM_UNASSIGNED) {
         this.conflict = true;
-        this.enabled = false;
+        this.disarm();
+      }
+      return;
+    }
+    // Recovery window: only the broadcast recovery beacon is looked at (PROTOCOL §9.0).
+    if (this.recoveryUntil >= 0) {
+      if (this.sched.now() <= this.recoveryUntil && cls === Cls.SYS_REQ && index === SysReq.COMMAND && idDevType(id) === 0 && idNum(id) === 0) {
+        const r = decodeCommand(d);
+        if (r?.cmd === Command.ENTER_BOOTLOADER && r.arg === RECOVERY_STAY_MAGIC) {
+          this.recoveryUntil = -1;
+          this.state = DeviceState.BOOTLOADER;
+          this.startHeartbeat();
+        }
       }
       return;
     }
@@ -324,15 +412,17 @@ export class FakeNode implements BusNode {
     }
     this.received.push(frame);
     if (this.mute.has(cls)) return;
+    if (this.inBootloader) {
+      // Bootloader: discovery, IDENTIFY, INFO 0..2, REBOOT and FW only (PROTOCOL §9).
+      if (cls === Cls.SYS_REQ) this.onBootloaderSys(index, d, idNum(id) === 0);
+      else if (cls === Cls.FW_REQ && this.resolved) this.onFw(index, d);
+      return;
+    }
     if (cls === Cls.SYS_REQ) {
-      this.onSys(index, d);
+      this.onSys(index, d, idNum(id) === 0 || idDevType(id) === 0);
       return;
     }
     if (!this.resolved) return;
-    if (this.inBootloader) {
-      if (cls === Cls.FW_REQ) this.onFw(index, d);
-      return;
-    }
     switch (cls) {
       case Cls.PARAM_REQ:
         this.onParam(index, d);
@@ -349,7 +439,37 @@ export class FakeNode implements BusNode {
     }
   }
 
-  private onSys(index: number, d: Uint8Array): void {
+  private onBootloaderSys(index: number, d: Uint8Array, broadcast: boolean): void {
+    if (index === SysReq.ENUM_REQ || index === SysReq.ASSIGN_ID || index === SysReq.IDENTIFY) {
+      this.onSys(index, d, broadcast);
+      return;
+    }
+    if (!this.resolved) return;
+    if (index === SysReq.INFO_REQ) {
+      const r = decodeInfoReq(d);
+      if (r && r.page <= InfoPage.UID_HI) this.send(this.infoFrame(r.page));
+      return;
+    }
+    if (index === SysReq.COMMAND && !broadcast) {
+      const r = decodeCommand(d);
+      if (r?.cmd === Command.REBOOT) {
+        this.reply(Command.REBOOT, CommandStatus.OK);
+        this.later(1, () => this.leaveBootloader());
+      }
+    }
+  }
+
+  /** Bootloader starts the installed application (it kept the image when nothing was erased). */
+  private leaveBootloader(): void {
+    this.stopTimers();
+    this.fwPhase = 'idle';
+    this.fwBuf = null;
+    this.resetRam();
+    this.state = DeviceState.BOOT;
+    this.startApp();
+  }
+
+  private onSys(index: number, d: Uint8Array, broadcast = false): void {
     switch (index) {
       case SysReq.ENUM_REQ: {
         const r = decodeEnumReq(d);
@@ -360,6 +480,12 @@ export class FakeNode implements BusNode {
       case SysReq.ASSIGN_ID: {
         const r = decodeAssignId(d);
         if (!r || r.uid48 !== this.uid48) return;
+        if (r.newNum !== this.num) {
+          // A new address: whatever drove the old one must not drive this board (PROTOCOL §3.3).
+          this.disarm();
+          this.cancel(this.streamTimer);
+          this.streamTimer = undefined;
+        }
         this.num = r.newNum;
         this.conflict = false;
         if (r.persist) this.persistedNum = r.newNum;
@@ -377,14 +503,17 @@ export class FakeNode implements BusNode {
         return;
       }
       case SysReq.ESTOP:
-        if (d[0] === 0xe5 && d[1] === 0x70 && this.resolved) {
+        if (d[0] === ESTOP_MAGIC_0 && d[1] === ESTOP_MAGIC_1 && this.resolved) {
+          this.estopFrames++;
           this.state = DeviceState.ESTOP;
-          this.enabled = false;
-          this.faults.active |= 1 << 9;
+          this.disarm();
+          this.faults.active |= 1 << FaultBit.ESTOP;
         }
         return;
     }
     if (!this.resolved) return;
+    // Broadcast commands: only the (bootloader) recovery beacon exists; applications ignore it.
+    if (broadcast && index === SysReq.COMMAND) return;
     switch (index) {
       case SysReq.INFO_REQ: {
         const r = decodeInfoReq(d);
@@ -444,10 +573,43 @@ export class FakeNode implements BusNode {
   }
 
   private reply(cmd: number, status: number, result = 0): void {
+    if (cmd === Command.ENTER_BOOTLOADER && status === CommandStatus.OK && this.dropEnterBootloaderRsp > 0) {
+      this.dropEnterBootloaderRsp--;
+      return;
+    }
     this.send(encodeCommandRsp(this.address, { cmd, status, result }));
   }
 
+  /** ESTOP frames received (the host repeats them). */
+  estopFrames = 0;
+
   private onCommand(cmd: number, arg: number): void {
+    // PROTOCOL §4.5: refused while driven; REBOOT/ENTER_BOOTLOADER also while in ESTOP.
+    const lockedWhileDriven: number[] = [
+      Command.REBOOT,
+      Command.ENTER_BOOTLOADER,
+      Command.SAVE_PARAMS,
+      Command.LOAD_DEFAULTS,
+      Command.LOAD_SAVED,
+    ];
+    if (this.enabled && lockedWhileDriven.includes(cmd)) {
+      this.reply(cmd, CommandStatus.DENIED);
+      return;
+    }
+    if (this.state === DeviceState.ESTOP && (cmd === Command.REBOOT || cmd === Command.ENTER_BOOTLOADER)) {
+      this.reply(cmd, CommandStatus.DENIED);
+      return;
+    }
+    if (cmd === Command.ENTER_BOOTLOADER) {
+      if (this.ignoreEnterBootloader > 0) {
+        this.ignoreEnterBootloader--;
+        return;
+      }
+      if (arg >>> 0 !== (ENTER_BOOTLOADER_INTENT | this.uid16) >>> 0) {
+        this.reply(cmd, CommandStatus.INVALID_ARG);
+        return;
+      }
+    }
     const script = this.commandScripts.get(cmd);
     if (script) {
       if (script.delayMs !== undefined) {
@@ -477,6 +639,11 @@ export class FakeNode implements BusNode {
         this.unsaved = true;
         this.reply(cmd, CommandStatus.OK);
         return;
+      case Command.LOAD_SAVED:
+        this.params = new Map(this.saved);
+        this.unsaved = false;
+        this.reply(cmd, CommandStatus.OK);
+        return;
       case Command.CLEAR_FAULTS:
         this.faults.sticky = 0;
         this.reply(cmd, CommandStatus.OK);
@@ -487,7 +654,7 @@ export class FakeNode implements BusNode {
         return;
       case Command.CLEAR_ESTOP:
         this.state = DeviceState.IDLE;
-        this.faults.active &= ~(1 << 9);
+        this.faults.active &= ~(1 << FaultBit.ESTOP);
         this.reply(cmd, CommandStatus.OK);
         return;
     }
@@ -508,14 +675,11 @@ export class FakeNode implements BusNode {
   private reboot(toBootloader: boolean): void {
     this.later(1, () => {
       this.stopTimers();
-      this.params = new Map(this.saved);
-      this.unsaved = false;
-      this.enabled = false;
-      this.slots = [];
+      this.resetRam();
       this.state = toBootloader ? DeviceState.BOOTLOADER : DeviceState.BOOT;
       this.later(200, () => {
-        if (!toBootloader) this.state = DeviceState.IDLE;
-        this.startHeartbeat();
+        if (toBootloader) this.startHeartbeat();
+        else this.startApp();
       });
     });
   }
@@ -557,12 +721,54 @@ export class FakeNode implements BusNode {
     this.send(encodeParamValue(this.address, { pid: p.pid, ptype: p.ptype, status, value: this.params.get(p.pid) ?? cur }));
   }
 
+  /**
+   * PROTOCOL §7: broadcast CTRL is ignored; only valid frames feed the timeout; a target is
+   * only taken after a neutral command since the last forced neutral.
+   */
   private onCtrl(frame: CanFrame): void {
-    if (this.state === DeviceState.ESTOP) return;
-    this.ctrl.push({ t: this.sched.now(), frame });
-    const set = decodeCtrlSet(frame.data);
+    const entry = { t: this.sched.now(), frame, accepted: false };
+    this.ctrl.push(entry);
+    if (idNum(frame.id) === 0 || idDevType(frame.id) === 0) return;
+    if (this.state === DeviceState.ESTOP || this.state === DeviceState.FAULT) return;
     const c = this.def.controls.find((x) => x.index === idIndex(frame.id));
-    if (c?.format === 'set' && set) this.enabled = set.mode !== 0;
+    if (!c) return;
+    let neutral: boolean;
+    let target: { mode: number; value: number } | null = null;
+    if (c.format === 'set') {
+      const set = decodeCtrlSet(frame.data);
+      if (!set || frame.data.length !== 8) return;
+      neutral = set.mode === 0 && set.value === 0;
+      target = { mode: set.mode, value: set.value };
+    } else if (c.format === 'servo4') {
+      const m = decodeCtrlServo(frame.data, c.index);
+      if (!m) return;
+      neutral = m.pulsesUs.every((p) => p === 0);
+    } else {
+      entry.accepted = true;
+      return;
+    }
+    if (neutral) {
+      this.armed = true;
+      this.enabled = false;
+      this.target = null;
+    } else {
+      if (!this.armed) return;
+      this.enabled = true;
+      this.target = target;
+    }
+    entry.accepted = true;
+    this.feedCtrlTimeout();
+  }
+
+  private feedCtrlTimeout(): void {
+    this.cancel(this.ctrlTimer);
+    const timeout = this.param('ctrl.timeout_ms') ?? 200;
+    this.ctrlTimer = this.later(timeout, () => {
+      this.ctrlTimer = undefined;
+      if (!this.enabled) return;
+      this.disarm();
+      this.faults.warn |= 1 << FaultBit.CTRL_TIMEOUT;
+    });
   }
 
   // Streaming --------------------------------------------------------------------------
@@ -629,7 +835,16 @@ export class FakeNode implements BusNode {
     this.send(encodeFwAck(this.address, { status, window: this.fwWindow, nextOffset }));
   }
 
+  /**
+   * PROTOCOL §9: BEGIN is answered OK at once without erasing; the header (first 64 bytes) is
+   * checked in RAM, then the board erases (BUSY) and answers OK with the offset to continue
+   * from. After END it verifies (BUSY) and starts the application.
+   */
   private onFw(index: number, d: Uint8Array): void {
+    if (this.fwPhase === 'erase' || this.fwPhase === 'verify') {
+      this.ack(FwStatus.BUSY);
+      return;
+    }
     if (index === FwReq.BEGIN) {
       const r = decodeFwBegin(d);
       if (!r) return;
@@ -638,15 +853,11 @@ export class FakeNode implements BusNode {
       this.fwBuf = new Uint8Array(r.size + 64);
       this.fwExpected = 0;
       this.fwCount = 0;
-      this.fwReady = false;
-      this.ack(FwStatus.BUSY, 0);
-      this.later(this.fwBeginBusyMs, () => {
-        this.fwReady = true;
-        this.ack(FwStatus.OK, 0);
-      });
+      this.fwPhase = 'header';
+      this.ack(FwStatus.OK, 0);
       return;
     }
-    if (!this.fwBuf || !this.fwReady) {
+    if (!this.fwBuf || this.fwPhase === 'idle') {
       this.ack(FwStatus.WRONG_STATE, 0);
       return;
     }
@@ -668,6 +879,37 @@ export class FakeNode implements BusNode {
         this.fwBuf[this.fwCorruptOffset] = (this.fwBuf[this.fwCorruptOffset] ?? 0) ^ 0xff;
       }
       this.fwExpected += n;
+      if (this.fwPhase === 'header' && this.fwExpected >= Math.min(CYFW_HEADER_SIZE, this.fwSize)) {
+        const h = decodeCyfwHeader(this.fwBuf.subarray(0, CYFW_HEADER_SIZE));
+        if (!h || h.model !== this.def.model || this.hwRev < h.hwRevMin || this.hwRev > h.hwRevMax) {
+          // Nothing erased: the installed application stays.
+          this.fwPhase = 'idle';
+          this.fwBuf = null;
+          this.ack(FwStatus.BAD_IMAGE, 0);
+          return;
+        }
+        this.fwPhase = 'erase';
+        this.fw = [0, 0, 0];
+        this.ack(FwStatus.BUSY);
+        this.later(this.fwBeginBusyMs, () => {
+          this.fwPhase = 'data';
+          this.fwCount = 0;
+          this.ack(FwStatus.OK);
+        });
+        return;
+      }
+      const busy = this.fwBusyAt;
+      if (busy && this.fwExpected >= busy.offset) {
+        this.fwBusyAt = null;
+        this.fwPhase = 'erase';
+        this.ack(FwStatus.BUSY);
+        this.later(busy.ms, () => {
+          this.fwPhase = 'data';
+          this.fwCount = 0;
+          this.ack(FwStatus.OK);
+        });
+        return;
+      }
       if (++this.fwCount >= this.fwWindow) {
         this.fwCount = 0;
         this.ack(FwStatus.OK);
@@ -675,23 +917,28 @@ export class FakeNode implements BusNode {
       return;
     }
     if (index === FwReq.END) {
+      this.fwCount = 0;
       if (this.fwExpected < this.fwSize) {
         this.ack(FwStatus.BAD_OFFSET);
         return;
       }
       const image = this.fwBuf.subarray(0, this.fwSize);
       if (crc32(image) !== this.fwCrc) {
+        this.fwPhase = 'idle';
         this.ack(FwStatus.BAD_CRC);
         return;
       }
       const h = decodeCyfwHeader(image);
-      this.ack(FwStatus.OK);
+      if (this.fwDropEndAcks > 0) this.fwDropEndAcks--;
+      else this.ack(FwStatus.OK);
+      this.fwPhase = 'verify';
       this.fwBuf = null;
       this.later(50, () => {
         this.stopTimers();
+        this.fwPhase = 'idle';
         this.fw = this.fwVersionAfterUpdate ?? (h ? [h.fwMajor, h.fwMinor, h.fwPatch] : this.fw);
-        this.state = DeviceState.IDLE;
-        this.startHeartbeat();
+        this.resetRam();
+        this.startApp();
       });
     }
   }

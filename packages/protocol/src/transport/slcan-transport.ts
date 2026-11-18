@@ -22,7 +22,10 @@ export interface SlcanTransportOptions {
 
 interface PendingCommand {
   cmd: string;
-  /** A rejected 'C' only means the channel was already closed. */
+  /**
+   * A rejected 'C' only means the channel was already closed; a rejected 'Y' means a classic
+   * adapter (CANable 1.x, Lawicel), which still works without CAN-FD.
+   */
   mustSucceed: boolean;
 }
 
@@ -36,6 +39,7 @@ export class SlcanTransport implements Transport {
   private openWait: { resolve: () => void; reject: (e: Error) => void; timer: unknown } | null = null;
   private readonly dataBitrate: SlcanDataBitrate;
   private readonly openTimeoutMs: number;
+  private fdRefused = false;
 
   constructor(
     private readonly stream: ByteStream,
@@ -67,13 +71,15 @@ export class SlcanTransport implements Transport {
     if (this.state.phase === 'open') return Promise.resolve();
     if (this.openWait) return Promise.reject(new Error('slcan: open already in progress'));
     this.parser.reset();
+    this.fdRefused = false;
+    this.info.fd = this.dataBitrate !== 0;
     this.setState({ phase: 'opening' });
     return new Promise<void>((resolve, reject) => {
       const timer = this.opts.scheduler.setTimeout(() => this.fail('adapter did not answer setup commands'), this.openTimeoutMs);
       this.openWait = { resolve, reject, timer };
       const cmds = slcanSetupCommands(this.dataBitrate);
       // Replies may arrive synchronously while writing, so iterate a copy of the command list.
-      this.pending = cmds.map((cmd) => ({ cmd, mustSucceed: cmd !== 'C' }));
+      this.pending = cmds.map((cmd) => ({ cmd, mustSucceed: cmd !== 'C' && !cmd.startsWith('Y') }));
       for (const cmd of cmds) this.write(encodeSlcanCommand(cmd));
     });
   }
@@ -111,8 +117,12 @@ export class SlcanTransport implements Transport {
       this.fail(`adapter rejected '${p.cmd}'`);
       return;
     }
+    if (!ok && p.cmd.startsWith('Y')) {
+      this.fdRefused = true;
+      this.info.fd = false;
+    }
     if (this.pending.length === 0) {
-      this.setState({ phase: 'open' });
+      this.setState(this.fdRefused ? { phase: 'open', notice: 'fd_unsupported' } : { phase: 'open' });
       this.settleOpen(null);
     }
   }

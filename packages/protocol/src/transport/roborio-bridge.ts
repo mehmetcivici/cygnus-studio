@@ -43,6 +43,10 @@ export function isBridgeAllowedId(id: number): boolean {
 /**
  * Transport over the roboRIO's TCP bridge (port 5800). The socket itself lives behind a
  * `ByteStream` supplied by the app; this class only frames the bytes. Classic CAN only.
+ *
+ * Single use after a framing error: a TCP byte stream that lost its framing cannot be
+ * resynchronised, so the transport closes its stream and `open()` keeps failing. Reconnect
+ * with a new socket and a new RoboRioBridgeTransport.
  */
 export class RoboRioBridgeTransport implements Transport {
   readonly info: TransportInfo;
@@ -82,7 +86,9 @@ export class RoboRioBridgeTransport implements Transport {
   open(): Promise<void> {
     if (this.state.phase === 'open') return Promise.resolve();
     if (this.openWait) return Promise.reject(new Error('roborio-bridge: open already in progress'));
-    if (this.broken) return Promise.reject(new Error(`roborio-bridge: ${this.state.error ?? 'stream is broken'}`));
+    if (this.broken) {
+      return Promise.reject(new Error(`roborio-bridge: ${this.state.error ?? 'stream is broken'}; create a new transport to reconnect`));
+    }
     this.setState({ phase: 'opening' });
     if (this.peerKind) {
       this.setState({ phase: 'open' });
@@ -203,10 +209,20 @@ export class RoboRioBridgeTransport implements Transport {
   }
 
   private fail(error: string): void {
+    const wasBroken = this.broken;
     this.broken = true;
     this.len = 0;
     this.setState({ phase: 'error', error });
     this.settleOpen(new Error(`roborio-bridge: ${error}`));
+    // Release the socket: nothing more can be read from it reliably.
+    if (!wasBroken) {
+      try {
+        const r = this.stream.close();
+        if (r) r.catch(() => undefined);
+      } catch {
+        // already closed
+      }
+    }
   }
 
   private settleOpen(err: Error | null): void {

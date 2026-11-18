@@ -9,6 +9,11 @@ export interface PlanDevice {
   name: string;
   /** Known current parameter values by catalog key (channel params as `ch.N.key`); equal values yield no step. */
   params?: Record<string, number>;
+  /**
+   * False for a board that is lost (or not usable): it cannot be bound, but its number stays
+   * reserved so it does not collide when it comes back. Default true.
+   */
+  online?: boolean;
 }
 
 export type PlanStep =
@@ -77,7 +82,8 @@ export function planApply(tpl: VehicleTemplate, cfg: VehicleConfig, devices: rea
     const b = cfg.bindings[slot.id];
     if (!b || b.kind === 'external') continue;
     const uid = norm(b.uid48);
-    const device = byUid.get(uid);
+    const found = byUid.get(uid);
+    const device = found?.online === false ? undefined : found;
     if (!device) { warn('deviceNotFound', { tr: `Kart hatta yok: ${slot.label.tr}.`, en: `Board not on the bus: ${slot.label.en}.` }, slot.id, b.uid48); continue; }
     if (device.model !== b.model) warn('modelMismatch', { tr: `Hattaki kart "${device.model}", atama "${b.model}".`, en: `Bus board is "${device.model}", binding says "${b.model}".` }, slot.id, b.uid48);
     const card = cards.get(uid) ?? { uid, device, slots: [] };
@@ -109,7 +115,12 @@ export function planApply(tpl: VehicleTemplate, cfg: VehicleConfig, devices: rea
       target = firstFree(desired, set);
       if (target !== undefined) warn('numShifted', { tr: `Numara ${desired} dolu; ${target} atandı.`, en: `Number ${desired} is taken; assigned ${target}.` }, first?.id, card.device.uid48);
     }
-    if (target === undefined) { warn('numExhausted', { tr: 'Boş numara kalmadı.', en: 'No free number left.' }, first?.id, card.device.uid48); continue; }
+    if (target === undefined) {
+      warn('numExhausted', { tr: 'Boş numara kalmadı.', en: 'No free number left.' }, first?.id, card.device.uid48);
+      // Without a number the board answers nothing but discovery: plan nothing else for it.
+      cards.delete(card.uid);
+      continue;
+    }
     set.add(target);
     finalNum.set(card.uid, target);
     if (target !== current && first) numSteps.push({ kind: 'assignNum', uid48: card.device.uid48, slotId: first.id, devType: card.device.devType, from: current, to: target });

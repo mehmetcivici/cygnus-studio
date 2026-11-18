@@ -27,9 +27,9 @@ describe('STATUS signals', () => {
     expect(h.getSignal('velocity')).toBe(1500);
     expect(h.getSignal('phase.current')).toBeCloseTo(4.25);
     expect(h.signals['bus.voltage']).toBeCloseTo(12.6);
-    // Frame 0 every 10 ms, frame 1 every 20 ms, frame 2 every 50 ms.
-    expect(frames.filter((f) => f === 0).length).toBeGreaterThanOrEqual(9);
-    expect(frames.filter((f) => f === 1).length).toBeGreaterThanOrEqual(4);
+    // Default periods (PROTOCOL §10.1 budget): frame 0 every 20 ms, frame 1 every 50 ms.
+    expect(frames.filter((f) => f === 0).length).toBeGreaterThanOrEqual(4);
+    expect(frames.filter((f) => f === 1).length).toBeGreaterThanOrEqual(1);
     expect(keysOfFrame0).toEqual(['velocity', 'phase.current', 'duty']);
     const count = frames.length;
     await run(r.sched, 50);

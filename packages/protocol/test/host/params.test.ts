@@ -164,3 +164,67 @@ describe('commands', () => {
     expect(n.identifySeconds).toBe(3);
   });
 });
+
+describe('late answers (review host-sim #2)', () => {
+  it('does not hand a retransmitted SET answer to the next SET of the same parameter', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 320, num: 1 });
+    const h = await r.ready(n);
+    // The first PARAM answer is slow (130 ms, so the host retransmits), later ones take 20 ms.
+    let first = true;
+    r.wire.delay = (f, from) => {
+      if (from !== 'node' || idClass(f.id) !== Cls.PARAM_RSP) return 0;
+      if (first) {
+        first = false;
+        return 130;
+      }
+      return 20;
+    };
+    const a = h.setParam('vel.kp', 0.001);
+    const b = h.setParam('vel.kp', 0.002);
+    const vb = await settle(r.sched, b);
+    expect(await a).toBeCloseTo(0.001, 6);
+    expect(vb).toBeCloseTo(0.002, 6);
+    await run(r.sched, 300);
+    expect(n.param('vel.kp')).toBeCloseTo(0.002, 6);
+    expect(h.cachedParam('vel.kp')).toBeCloseTo(0.002, 6);
+  });
+
+  it('keeps GETs apart in the same way', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 321, num: 1 });
+    const h = await r.ready(n);
+    let first = true;
+    r.wire.delay = (f, from) => {
+      if (from !== 'node' || idClass(f.id) !== Cls.PARAM_RSP) return 0;
+      if (first) {
+        first = false;
+        return 130;
+      }
+      return 20;
+    };
+    const a = h.getParam('vel.kp');
+    await settle(r.sched, a);
+    // The board changes the value (another host); the stale answer of the first GET is still in flight.
+    n.params.set(getModel(Model.ESC_20A)!.params.find((p) => p.key === 'vel.kp')!.pid, Math.fround(0.004));
+    const b = await settle(r.sched, h.getParam('vel.kp'));
+    expect(b).toBeCloseTo(0.004, 6);
+  });
+});
+
+describe('loadSaved', () => {
+  it('reloads the saved parameters and drops the cache', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 322, num: 1 });
+    const h = await r.ready(n);
+    const saved = n.param('vel.kp');
+    await settle(r.sched, h.setParam('vel.kp', 0.0042));
+    let invalidated = 0;
+    h.on('paramsInvalidated', () => invalidated++);
+    await settle(r.sched, h.loadSaved());
+    expect(invalidated).toBe(1);
+    expect(h.cachedParam('vel.kp')).toBeUndefined();
+    expect(n.param('vel.kp')).toBe(saved);
+    expect(n.unsaved).toBe(false);
+  });
+});

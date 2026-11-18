@@ -126,6 +126,8 @@ export interface ActionDef {
   longRunning?: boolean;
   /** Ask the user before running (moves actuators or rewrites settings). */
   confirm?: boolean;
+  /** Running it moves an actuator (a motor spins, servos travel): treat it like driving the board. */
+  movesActuator?: boolean;
 }
 
 export interface BitDef {
@@ -150,6 +152,10 @@ export interface TunerLoopDef {
   /** Other parameters worth showing next to the gains (filters, profile limits). */
   extraParams?: string[];
   signals: { target: string; measured: string; output: string; error: string };
+  /** Key of the open-loop mode of the same CTRL frame (plant experiments); absent: none. */
+  openMode?: string;
+  /** The measured value integrates the output (position from velocity): open-loop runs drift. */
+  integrating?: boolean;
 }
 
 export type ModelCategory = 'motor' | 'sensor' | 'servo' | 'power' | 'tool';

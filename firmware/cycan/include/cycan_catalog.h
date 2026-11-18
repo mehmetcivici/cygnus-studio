@@ -29,6 +29,7 @@
 #define CYCAN_CMD_CLEAR_FAULTS                                   5u  /* Clear faults */
 #define CYCAN_CMD_SELF_TEST                                      6u  /* Self-test */
 #define CYCAN_CMD_CLEAR_ESTOP                                    7u  /* Clear emergency stop */
+#define CYCAN_CMD_LOAD_SAVED                                     8u  /* Reload saved settings */
 
 /* Common fault bits. */
 #define CYCAN_FAULT_UNDERVOLT                                    0u  /* Undervoltage */
@@ -150,15 +151,15 @@
 #define CYCAN_ESC20A_MODE_VELOCITY                               3u  /* CTRL/0 Velocity */
 #define CYCAN_ESC20A_MODE_POSITION                               4u  /* CTRL/0 Position */
 #define CYCAN_ESC20A_MODE_BRAKE                                  5u  /* CTRL/0 Brake */
-#define CYCAN_ESC20A_STATUS0_DEFAULT_PERIOD_MS                   10u  /* Fast */
+#define CYCAN_ESC20A_STATUS0_DEFAULT_PERIOD_MS                   20u  /* Fast */
 /* STATUS/0 layout: velocity@0 f32, phase.current@4 i16 x0.01, duty@6 i16 x0.0001 */
-#define CYCAN_ESC20A_STATUS1_DEFAULT_PERIOD_MS                   20u  /* Position and supply */
+#define CYCAN_ESC20A_STATUS1_DEFAULT_PERIOD_MS                   50u  /* Position and supply */
 /* STATUS/1 layout: position@0 f32, bus.voltage@4 u16 x0.01, bus.current@6 i16 x0.01 */
-#define CYCAN_ESC20A_STATUS2_DEFAULT_PERIOD_MS                   50u  /* Closed loop */
+#define CYCAN_ESC20A_STATUS2_DEFAULT_PERIOD_MS                   100u  /* Closed loop */
 /* STATUS/2 layout: setpoint@0 f32, error@4 f32 */
-#define CYCAN_ESC20A_STATUS3_DEFAULT_PERIOD_MS                   100u  /* Thermal and input */
+#define CYCAN_ESC20A_STATUS3_DEFAULT_PERIOD_MS                   200u  /* Thermal and input */
 /* STATUS/3 layout: loop.output@0 i16 x0.001, temp.fet@2 i16 x0.1, temp.motor@4 i16 x0.1, pwm.pulse@6 u16 */
-#define CYCAN_ESC20A_STATUS4_DEFAULT_PERIOD_MS                   500u  /* Energy */
+#define CYCAN_ESC20A_STATUS4_DEFAULT_PERIOD_MS                   1000u  /* Energy */
 /* STATUS/4 layout: energy@0 f32, ctrl.mode@4 u8 */
 /* X(pid, NAME, ptype, min, max, default, min_nonzero, flags) */
 #define CYCAN_ESC20A_PARAMS(X) \
@@ -215,11 +216,11 @@
   X(0x0001u, CAN_DATA_BITRATE, CYCAN_PTYPE_ENUM, 0u, 3u, 1u, 0u, CYCAN_PF_REBOOT) \
   X(0x0002u, CAN_TERMINATION, CYCAN_PTYPE_BOOL, 0u, 1u, 0u, 0u, CYCAN_PF_READ_ONLY) \
   X(0x0003u, CTRL_TIMEOUT_MS, CYCAN_PTYPE_U32, 20u, 2000u, 200u, 0u, 0u) \
-  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 10u, 5u, 0u) \
-  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
-  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
-  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u) \
-  X(0x0014u, STATUS_4_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 500u, 5u, 0u)
+  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
+  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
+  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u) \
+  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 200u, 5u, 0u) \
+  X(0x0014u, STATUS_4_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 1000u, 5u, 0u)
 
 /* ---- 2 - ESC 80A ---------------------------------------------------- */
 #define CYCAN_ESC80A_DEVTYPE                                     2u
@@ -316,15 +317,15 @@
 #define CYCAN_ESC80A_MODE_VELOCITY                               3u  /* CTRL/0 Velocity */
 #define CYCAN_ESC80A_MODE_POSITION                               4u  /* CTRL/0 Position */
 #define CYCAN_ESC80A_MODE_BRAKE                                  5u  /* CTRL/0 Brake */
-#define CYCAN_ESC80A_STATUS0_DEFAULT_PERIOD_MS                   10u  /* Fast */
+#define CYCAN_ESC80A_STATUS0_DEFAULT_PERIOD_MS                   20u  /* Fast */
 /* STATUS/0 layout: velocity@0 f32, phase.current@4 i16 x0.01, duty@6 i16 x0.0001 */
-#define CYCAN_ESC80A_STATUS1_DEFAULT_PERIOD_MS                   20u  /* Position and supply */
+#define CYCAN_ESC80A_STATUS1_DEFAULT_PERIOD_MS                   50u  /* Position and supply */
 /* STATUS/1 layout: position@0 f32, bus.voltage@4 u16 x0.01, bus.current@6 i16 x0.01 */
-#define CYCAN_ESC80A_STATUS2_DEFAULT_PERIOD_MS                   50u  /* Closed loop */
+#define CYCAN_ESC80A_STATUS2_DEFAULT_PERIOD_MS                   100u  /* Closed loop */
 /* STATUS/2 layout: setpoint@0 f32, error@4 f32 */
-#define CYCAN_ESC80A_STATUS3_DEFAULT_PERIOD_MS                   100u  /* Thermal and input */
+#define CYCAN_ESC80A_STATUS3_DEFAULT_PERIOD_MS                   200u  /* Thermal and input */
 /* STATUS/3 layout: loop.output@0 i16 x0.001, temp.fet@2 i16 x0.1, temp.motor@4 i16 x0.1, pwm.pulse@6 u16 */
-#define CYCAN_ESC80A_STATUS4_DEFAULT_PERIOD_MS                   500u  /* Energy */
+#define CYCAN_ESC80A_STATUS4_DEFAULT_PERIOD_MS                   1000u  /* Energy */
 /* STATUS/4 layout: energy@0 f32, ctrl.mode@4 u8 */
 /* X(pid, NAME, ptype, min, max, default, min_nonzero, flags) */
 #define CYCAN_ESC80A_PARAMS(X) \
@@ -381,11 +382,11 @@
   X(0x0001u, CAN_DATA_BITRATE, CYCAN_PTYPE_ENUM, 0u, 3u, 1u, 0u, CYCAN_PF_REBOOT) \
   X(0x0002u, CAN_TERMINATION, CYCAN_PTYPE_BOOL, 0u, 1u, 0u, 0u, CYCAN_PF_READ_ONLY) \
   X(0x0003u, CTRL_TIMEOUT_MS, CYCAN_PTYPE_U32, 20u, 2000u, 200u, 0u, 0u) \
-  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 10u, 5u, 0u) \
-  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
-  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
-  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u) \
-  X(0x0014u, STATUS_4_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 500u, 5u, 0u)
+  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
+  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
+  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u) \
+  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 200u, 5u, 0u) \
+  X(0x0014u, STATUS_4_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 1000u, 5u, 0u)
 
 /* ---- 3 - Cyncoder ---------------------------------------------------- */
 #define CYCAN_CYNCODER_DEVTYPE                                   7u
@@ -427,7 +428,7 @@
 #define CYCAN_CYNCODER_SELFTEST_PARAM_STORAGE                    2u  /* Settings memory */
 #define CYCAN_CYNCODER_STATUS0_DEFAULT_PERIOD_MS                 10u  /* Position and velocity */
 /* STATUS/0 layout: position@0 f32, velocity@4 f32 */
-#define CYCAN_CYNCODER_STATUS1_DEFAULT_PERIOD_MS                 20u  /* Absolute and magnet */
+#define CYCAN_CYNCODER_STATUS1_DEFAULT_PERIOD_MS                 100u  /* Absolute and magnet */
 /* STATUS/1 layout: abs.position@0 f32, raw.angle@4.0:12 u16, magnet.status@4.12:2 u16, magnet.agc@6 u8, temp@7 i8 */
 /* X(pid, NAME, ptype, min, max, default, min_nonzero, flags) */
 #define CYCAN_CYNCODER_PARAMS(X) \
@@ -445,7 +446,7 @@
   X(0x0001u, CAN_DATA_BITRATE, CYCAN_PTYPE_ENUM, 0u, 3u, 1u, 0u, CYCAN_PF_REBOOT) \
   X(0x0002u, CAN_TERMINATION, CYCAN_PTYPE_BOOL, 0u, 1u, 0u, 0u, CYCAN_PF_READ_ONLY) \
   X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 10u, 5u, 0u) \
-  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u)
+  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u)
 
 /* ---- 4 - CAN gyro ---------------------------------------------------- */
 #define CYCAN_GYRO_DEVTYPE                                       4u
@@ -498,11 +499,11 @@
 #define CYCAN_GYRO_SELFTEST_PARAM_STORAGE                        3u  /* Settings memory */
 #define CYCAN_GYRO_STATUS0_DEFAULT_PERIOD_MS                     10u  /* Orientation */
 /* STATUS/0 layout: yaw@0 f32, pitch@4 i16 x0.01, roll@6 i16 x0.01 */
-#define CYCAN_GYRO_STATUS1_DEFAULT_PERIOD_MS                     10u  /* Angular rate */
+#define CYCAN_GYRO_STATUS1_DEFAULT_PERIOD_MS                     20u  /* Angular rate */
 /* STATUS/1 layout: gyro.x@0 i16 x0.1, gyro.y@2 i16 x0.1, gyro.z@4 i16 x0.1, cal.status@6.0:2 u8, temp@7 i8 */
-#define CYCAN_GYRO_STATUS2_DEFAULT_PERIOD_MS                     20u  /* Acceleration */
+#define CYCAN_GYRO_STATUS2_DEFAULT_PERIOD_MS                     50u  /* Acceleration */
 /* STATUS/2 layout: accel.x@0 i16 x0.001, accel.y@2 i16 x0.001, accel.z@4 i16 x0.001 */
-#define CYCAN_GYRO_STATUS3_DEFAULT_PERIOD_MS                     20u  /* Quaternion */
+#define CYCAN_GYRO_STATUS3_DEFAULT_PERIOD_MS                     50u  /* Quaternion */
 /* STATUS/3 layout: quat.w@0 i16 x0.00006103516, quat.x@2 i16 x0.00006103516, quat.y@4 i16 x0.00006103516, quat.z@6 i16 x0.00006103516 */
 /* X(pid, NAME, ptype, min, max, default, min_nonzero, flags) */
 #define CYCAN_GYRO_PARAMS(X) \
@@ -521,9 +522,9 @@
   X(0x0001u, CAN_DATA_BITRATE, CYCAN_PTYPE_ENUM, 0u, 3u, 1u, 0u, CYCAN_PF_REBOOT) \
   X(0x0002u, CAN_TERMINATION, CYCAN_PTYPE_BOOL, 0u, 1u, 0u, 0u, CYCAN_PF_READ_ONLY) \
   X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 10u, 5u, 0u) \
-  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 10u, 5u, 0u) \
-  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
-  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u)
+  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
+  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
+  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u)
 
 /* ---- 5 - CAN servo controller, 16 channels ---------------------------------------------------- */
 #define CYCAN_SERVO16_DEVTYPE                                    12u
@@ -852,7 +853,7 @@
 #define CYCAN_SEALED_SERVO_MODE_POSITION                         1u  /* CTRL/0 Position */
 #define CYCAN_SEALED_SERVO_MODE_VELOCITY                         2u  /* CTRL/0 Velocity */
 #define CYCAN_SEALED_SERVO_MODE_DUTY                             3u  /* CTRL/0 Duty cycle */
-#define CYCAN_SEALED_SERVO_STATUS0_DEFAULT_PERIOD_MS             10u  /* Fast */
+#define CYCAN_SEALED_SERVO_STATUS0_DEFAULT_PERIOD_MS             20u  /* Fast */
 /* STATUS/0 layout: position@0 f32, velocity@4 i16 x0.1, current@6 i16 x0.001 */
 #define CYCAN_SEALED_SERVO_STATUS1_DEFAULT_PERIOD_MS             50u  /* Closed loop */
 /* STATUS/1 layout: setpoint@0 f32, error@4 f32 */
@@ -878,7 +879,7 @@
   X(0x0001u, CAN_DATA_BITRATE, CYCAN_PTYPE_ENUM, 0u, 3u, 1u, 0u, CYCAN_PF_REBOOT) \
   X(0x0002u, CAN_TERMINATION, CYCAN_PTYPE_BOOL, 0u, 1u, 0u, 0u, CYCAN_PF_READ_ONLY) \
   X(0x0003u, CTRL_TIMEOUT_MS, CYCAN_PTYPE_U32, 20u, 2000u, 200u, 0u, 0u) \
-  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 10u, 5u, 0u) \
+  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
   X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
   X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u)
 
@@ -955,13 +956,13 @@
 #define CYCAN_PDH_LARGE_SELFTEST_CURRENT_SENSE                   0u  /* Current sensors */
 #define CYCAN_PDH_LARGE_SELFTEST_RAIL_SENSE                      1u  /* Rail voltages */
 #define CYCAN_PDH_LARGE_SELFTEST_FUSE_SENSE                      2u  /* Fuse detection */
-#define CYCAN_PDH_LARGE_STATUS0_DEFAULT_PERIOD_MS                20u  /* Channel 1?4 current */
+#define CYCAN_PDH_LARGE_STATUS0_DEFAULT_PERIOD_MS                50u  /* Channel 1?4 current */
 /* STATUS/0 layout: ch.1.current@0 u16 x0.01, ch.2.current@2 u16 x0.01, ch.3.current@4 u16 x0.01, ch.4.current@6 u16 x0.01 */
-#define CYCAN_PDH_LARGE_STATUS1_DEFAULT_PERIOD_MS                20u  /* Channel 5?8 current */
+#define CYCAN_PDH_LARGE_STATUS1_DEFAULT_PERIOD_MS                50u  /* Channel 5?8 current */
 /* STATUS/1 layout: ch.5.current@0 u16 x0.01, ch.6.current@2 u16 x0.01, ch.7.current@4 u16 x0.01, ch.8.current@6 u16 x0.01 */
-#define CYCAN_PDH_LARGE_STATUS2_DEFAULT_PERIOD_MS                50u  /* Totals */
+#define CYCAN_PDH_LARGE_STATUS2_DEFAULT_PERIOD_MS                100u  /* Totals */
 /* STATUS/2 layout: input.voltage@0 u16 x0.01, total.current@2 u16 x0.01, power@4 u16, fuse.mask@6 u8, temp@7 i8 */
-#define CYCAN_PDH_LARGE_STATUS3_DEFAULT_PERIOD_MS                200u  /* Auxiliary rails */
+#define CYCAN_PDH_LARGE_STATUS3_DEFAULT_PERIOD_MS                500u  /* Auxiliary rails */
 /* STATUS/3 layout: aux5.voltage@0 u16 x0.001, aux5.current@2 u16 x0.001, aux12.voltage@4 u16 x0.001, aux12.current@6 u16 x0.001 */
 #define CYCAN_PDH_LARGE_STATUS4_DEFAULT_PERIOD_MS                1000u  /* Energy */
 /* STATUS/4 layout: energy@0 f32 */
@@ -981,10 +982,10 @@
   X(0x0121u, AUX_12V_ENABLE, CYCAN_PTYPE_BOOL, 0u, 1u, 1u, 0u, 0u) \
   X(0x0001u, CAN_DATA_BITRATE, CYCAN_PTYPE_ENUM, 0u, 3u, 1u, 0u, CYCAN_PF_REBOOT) \
   X(0x0002u, CAN_TERMINATION, CYCAN_PTYPE_BOOL, 0u, 1u, 0u, 0u, 0u) \
-  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
-  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 20u, 5u, 0u) \
-  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
-  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 200u, 5u, 0u) \
+  X(0x0010u, STATUS_0_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
+  X(0x0011u, STATUS_1_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 50u, 5u, 0u) \
+  X(0x0012u, STATUS_2_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 100u, 5u, 0u) \
+  X(0x0013u, STATUS_3_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 500u, 5u, 0u) \
   X(0x0014u, STATUS_4_PERIOD_MS, CYCAN_PTYPE_U32, 0u, 60000u, 1000u, 5u, 0u)
 
 /* ---- 9 - SoC regulator ---------------------------------------------------- */

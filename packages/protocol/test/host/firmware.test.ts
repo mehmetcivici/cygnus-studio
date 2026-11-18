@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { Cls, DeviceState, FW_CHUNK_CLASSIC, FwReq, FwStatus, Model } from '../../src/core/constants';
+import {
+  Cls,
+  Command,
+  DeviceState,
+  ENTER_BOOTLOADER_INTENT,
+  FW_CHUNK_CLASSIC,
+  FwReq,
+  FwStatus,
+  Model,
+  RECOVERY_BEACON_PERIOD_MS,
+  RECOVERY_STAY_MAGIC,
+  SysReq,
+} from '../../src/core/constants';
 import { buildCyfw } from '../../src/core/cyfw';
-import { idClass, idIndex } from '../../src/core/id';
+import { lengthToDlc, dlcToLength } from '../../src/core/fd';
+import { idClass, idDevType, idIndex, idNum } from '../../src/core/id';
+import { decodeCommand } from '../../src/core/messages';
 import type { AbortSignalLike, FirmwareProgress } from '../../src/host/types';
 import { run, settle } from '../helpers/fake-bus';
 import { caught, rig } from '../helpers/setup';
@@ -59,7 +73,7 @@ describe('firmware update', () => {
     expect(h.state).toBe(DeviceState.IDLE);
     expect(dataFrames(r.wire.hostFrames())).toBe(Math.ceil(img.length / 61));
     const phases = [...new Set(progress.map((p) => p.phase))];
-    expect(phases).toEqual(['validate', 'enterBootloader', 'erase', 'transfer', 'verify']);
+    expect(phases).toEqual(['validate', 'enterBootloader', 'erase', 'transfer', 'finish', 'verify']);
     for (let i = 1; i < progress.length; i++) expect(progress[i]!.fraction).toBeGreaterThanOrEqual(progress[i - 1]!.fraction);
     expect(progress.at(-1)!.fraction).toBe(1);
     expect(h.firmware.busy).toBe(false);
@@ -167,5 +181,144 @@ describe('firmware update', () => {
     expect(res.find((x) => x.device.uid48 === r.bus.deviceByUid(b.uid48)!.uid48)?.skipped).toBe('same_version');
     expect(res.find((x) => x.device.model === Model.GYRO)?.skipped).toBe('no_image');
     expect(res.filter((x) => x.result).length).toBe(2);
+  });
+
+  it('asks for the bootloader with the intent argument and repeats an unanswered request', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 340, num: 1 });
+    const h = await r.ready(n);
+    n.ignoreEnterBootloader = 1;
+    const res = await settle(r.sched, h.firmware.update(image(Model.ESC_20A, [1, 2, 0], 300)));
+    expect(res.version.minor).toBe(2);
+    const enters = r.transport.sent
+      .filter((f) => idClass(f.id) === Cls.SYS_REQ && idIndex(f.id) === SysReq.COMMAND)
+      .map((f) => decodeCommand(f.data))
+      .filter((c) => c?.cmd === Command.ENTER_BOOTLOADER);
+    expect(enters).toHaveLength(2);
+    for (const c of enters) expect(c!.arg).toBe((ENTER_BOOTLOADER_INTENT | n.uid16) >>> 0);
+  });
+
+  it('also when only the answer to ENTER_BOOTLOADER is lost', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 341, num: 1 });
+    const h = await r.ready(n);
+    n.dropEnterBootloaderRsp = 1;
+    const res = await settle(r.sched, h.firmware.update(image(Model.ESC_20A, [1, 3, 0], 300)));
+    expect(res.version.minor).toBe(3);
+  });
+
+  it('confirms the update from the heartbeat version when the END answer is lost', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 342, num: 1 });
+    const h = await r.ready(n);
+    n.fwDropEndAcks = 1;
+    const res = await settle(r.sched, h.firmware.update(image(Model.ESC_20A, [4, 0, 0], 1000)));
+    expect(res.version).toEqual({ major: 4, minor: 0, patch: 0 });
+    // Only END was repeated: no DATA after the first END.
+    const frames = r.transport.sent.filter((f) => idClass(f.id) === Cls.FW_REQ);
+    const firstEnd = frames.findIndex((f) => idIndex(f.id) === FwReq.END);
+    expect(frames.slice(firstEnd).every((f) => idIndex(f.id) === FwReq.END)).toBe(true);
+  });
+
+  it('waits out BUSY in the middle of a transfer and continues where the board says', async () => {
+    const r = await rig({ fd: false });
+    const n = r.node({ model: Model.CYNCODER, seed: 343, num: 1, fd: false });
+    const h = await r.ready(n);
+    n.fwBusyAt = { offset: 400, ms: 120 };
+    const res = await settle(r.sched, h.firmware.update(image(Model.CYNCODER, [1, 7, 0], 900)));
+    expect(res.version.minor).toBe(7);
+  });
+
+  it('leaves the installed application alone when the board refuses the header', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 344, num: 1, fw: [1, 0, 0], hwRev: 2 });
+    const h = await r.ready(n);
+    n.hwRev = 7; // the host still believes rev 2: the board's own check must catch it
+    const e = await caught(settle(r.sched, h.firmware.update(image(Model.ESC_20A, [2, 0, 0], 600))));
+    expect(e).toMatchObject({ code: 'REJECTED', status: FwStatus.BAD_IMAGE, statusKind: 'fw' });
+    // Nothing was erased; the host restarted the board into its old application.
+    await run(r.sched, 1000);
+    expect(n.inBootloader).toBe(false);
+    expect(n.fw).toEqual([1, 0, 0]);
+    expect(h.state).toBe(DeviceState.IDLE);
+  });
+
+  it('sends only full chunks whose length + 3 is a valid frame length, and uses classic chunks when the board rate is unknown', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 345, num: 1 });
+    const h = await r.ready(n);
+    await settle(r.sched, h.firmware.update(image(Model.ESC_20A, [1, 1, 1], 777)));
+    const lens = r.transport.sent.filter((f) => idClass(f.id) === Cls.FW_REQ && idIndex(f.id) === FwReq.DATA).map((f) => f.data.length);
+    for (const len of lens.slice(0, -1)) expect(dlcToLength(lengthToDlc(len))).toBe(len);
+    expect(new Set(lens.slice(0, -1))).toEqual(new Set([64]));
+
+    // A board whose data rate is unknown (no answer to the GET) gets classic chunks.
+    const r2 = await rig();
+    const n2 = r2.node({ model: Model.ESC_20A, seed: 346, num: 1 });
+    const h2 = await r2.ready(n2);
+    n2.mute.add(Cls.PARAM_REQ);
+    await settle(r2.sched, h2.firmware.update(image(Model.ESC_20A, [1, 1, 2], 300)));
+    const lens2 = r2.transport.sent.filter((f) => idClass(f.id) === Cls.FW_REQ && idIndex(f.id) === FwReq.DATA).map((f) => f.data.length);
+    expect(new Set(lens2.slice(0, -1))).toEqual(new Set([8]));
+  });
+
+  it('lists the boards it never reached when the link goes down during a batch', async () => {
+    const r = await rig();
+    const a = r.node({ model: Model.ESC_20A, seed: 347, num: 1 });
+    const b = r.node({ model: Model.ESC_20A, seed: 348, num: 2 });
+    await r.ready(a);
+    await r.ready(b);
+    const p = r.bus.updateAllFirmware([image(Model.ESC_20A, [5, 0, 0], 3000)], {
+      onProgress: (_d, pr) => {
+        if (pr.phase === 'transfer' && pr.sent > 500) r.transport.fail();
+      },
+    });
+    const res = await settle(r.sched, p);
+    expect(res).toHaveLength(2);
+    expect(res[0]).toMatchObject({ ok: false, error: { code: 'DISCONNECTED' } });
+    expect(res[1]).toMatchObject({ ok: false, skipped: 'aborted', error: { code: 'DISCONNECTED' } });
+  });
+});
+
+describe('recovery mode', () => {
+  it('keeps a board with a broken application in its bootloader while the user power-cycles', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 350, num: 1 });
+    await r.ready(n);
+    n.appBroken = true;
+    const states: boolean[] = [];
+    r.bus.on('recovery', (on) => states.push(on));
+    r.bus.recovery.start();
+    expect(r.bus.recovery.active).toBe(true);
+    n.powerOff();
+    await run(r.sched, 400);
+    n.powerOn();
+    await run(r.sched, 2000);
+    expect(n.inBootloader).toBe(true);
+    expect(r.bus.recovery.devices.map((d) => d.uid48)).toEqual([r.bus.deviceByUid(n.uid48)!.uid48]);
+    const beacons = r.transport.sent.filter((f) => idClass(f.id) === Cls.SYS_REQ && idIndex(f.id) === SysReq.COMMAND && idDevType(f.id) === 0 && idNum(f.id) === 0);
+    expect(beacons.length).toBeGreaterThanOrEqual(Math.floor(2400 / RECOVERY_BEACON_PERIOD_MS) - 1);
+    expect(decodeCommand(beacons[0]!.data)).toMatchObject({ cmd: Command.ENTER_BOOTLOADER, arg: RECOVERY_STAY_MAGIC });
+    r.bus.recovery.stop();
+    const count = r.transport.sent.length;
+    await run(r.sched, 100);
+    expect(r.transport.sent.length - count).toBeLessThan(3);
+    expect(states).toEqual([true, false]);
+    // A good image can now go in from the bootloader.
+    n.appBroken = false;
+    const h = r.bus.deviceByUid(n.uid48)!;
+    const res = await settle(r.sched, h.firmware.update(image(Model.ESC_20A, [1, 9, 0], 300)));
+    expect(res.version.minor).toBe(9);
+  });
+
+  it('does not touch running applications', async () => {
+    const r = await rig();
+    const n = r.node({ model: Model.ESC_20A, seed: 351, num: 1 });
+    await r.ready(n);
+    r.bus.recovery.start();
+    await run(r.sched, 500);
+    r.bus.recovery.stop();
+    expect(n.inBootloader).toBe(false);
+    expect(n.state).toBe(DeviceState.IDLE);
   });
 });

@@ -22,6 +22,8 @@ export class FakeBus {
   private readonly transports = new Set<FakeTransport>();
   /** Return true to drop a frame on the wire. */
   drop: ((frame: TxFrame, from: 'host' | 'node') => boolean) | null = null;
+  /** Extra delivery delay per frame, ms (reordering on purpose: a slow adapter or a busy board). */
+  delay: ((frame: TxFrame, from: 'host' | 'node') => number) | null = null;
 
   constructor(
     readonly scheduler: ManualScheduler,
@@ -63,7 +65,7 @@ export class FakeBus {
       const at: CanFrame = { ...frame, timestamp: this.scheduler.now() };
       for (const n of this.nodes) if (n !== src) n.receive(at);
       for (const t of this.transports) if (t !== src && (!at.fd || t.info.fd)) t.deliver(at);
-    }, this.latencyMs);
+    }, this.latencyMs + (this.delay?.(f, from) ?? 0));
   }
 }
 

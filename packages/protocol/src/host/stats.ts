@@ -1,3 +1,5 @@
+import type { ModelDef } from '../catalog/schema';
+import { Timing } from '../core/constants';
 import type { TxFrame } from '../core/frame';
 
 /*
@@ -28,6 +30,18 @@ export function frameTimeUs(f: Pick<TxFrame, 'data' | 'fd' | 'brs'>, nominalBps:
   const arb = FD_ARB_BITS + stuff(FD_ARB_BITS);
   const dataRate = f.brs ? dataBps : nominalBps;
   return ((arb + FD_TAIL_BITS) * 1e6) / nominalBps + (dataStuffed * 1e6) / dataRate;
+}
+
+const CLASSIC_8 = { data: new Uint8Array(8), fd: false, brs: false };
+
+/**
+ * Fraction of a 1 Mbit/s bus one board of `def` takes with its default STATUS periods plus
+ * heartbeat (all 8-byte classic frames), for the budget in PROTOCOL §10.1.
+ */
+export function defaultStatusLoad(def: ModelDef): number {
+  let fps = 1000 / Timing.HEARTBEAT_MS;
+  for (const f of def.statusFrames) if (f.defaultPeriodMs > 0) fps += 1000 / f.defaultPeriodMs;
+  return (fps * frameTimeUs(CLASSIC_8, 1_000_000, 1_000_000)) / 1e6;
 }
 
 export interface BusStats {

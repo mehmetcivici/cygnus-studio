@@ -120,19 +120,19 @@ export const POWER_DIST_LARGE: ModelDef = defineModel({
     {
       index: 0,
       label: tx(['Kanal 1–4 akımı', 'Channel 1–4 current']),
-      defaultPeriodMs: 20,
+      defaultPeriodMs: 50,
       fields: [0, 1, 2, 3].map((i) => ({ signal: `ch.${i + 1}.current`, byte: 2 * i, type: 'u16' as const, scale: 0.01 })),
     },
     {
       index: 1,
       label: tx(['Kanal 5–8 akımı', 'Channel 5–8 current']),
-      defaultPeriodMs: 20,
+      defaultPeriodMs: 50,
       fields: [0, 1, 2, 3].map((i) => ({ signal: `ch.${i + 5}.current`, byte: 2 * i, type: 'u16' as const, scale: 0.01 })),
     },
     {
       index: 2,
       label: tx(['Toplam', 'Totals']),
-      defaultPeriodMs: 50,
+      defaultPeriodMs: 100,
       fields: [
         { signal: 'input.voltage', byte: 0, type: 'u16', scale: 0.01 },
         { signal: 'total.current', byte: 2, type: 'u16', scale: 0.01 },
@@ -144,7 +144,7 @@ export const POWER_DIST_LARGE: ModelDef = defineModel({
     {
       index: 3,
       label: tx(['Yardımcı raylar', 'Auxiliary rails']),
-      defaultPeriodMs: 200,
+      defaultPeriodMs: 500,
       fields: [
         { signal: 'aux5.voltage', byte: 0, type: 'u16', scale: 0.001 },
         { signal: 'aux5.current', byte: 2, type: 'u16', scale: 0.001 },

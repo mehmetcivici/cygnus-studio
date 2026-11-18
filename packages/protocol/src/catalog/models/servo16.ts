@@ -104,7 +104,7 @@ export const SERVO16: ModelDef = defineModel({
   controls: controlFrames,
   actions: [
     { cmd: 0x40, key: 'center_all', label: tx(['Tüm kanalları ortala', 'Center all channels']),
-      help: tx(['Etkin kanalların hepsini orta darbeye getirir.', 'Moves every enabled channel to its center pulse.']), confirm: true },
+      help: tx(['Etkin kanalların hepsini orta darbeye getirir.', 'Moves every enabled channel to its center pulse.']), confirm: true, movesActuator: true },
     { cmd: 0x41, key: 'disable_all', label: tx(['Tüm kanalları kapat', 'Disable all channels']),
       help: tx(['Bütün kanallarda darbe üretimini durdurur.', 'Stops pulse output on every channel.']) },
   ],

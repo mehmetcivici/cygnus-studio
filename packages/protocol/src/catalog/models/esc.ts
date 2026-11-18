@@ -234,7 +234,7 @@ function esc(v: EscVariant): ModelDef {
       {
         index: 0,
         label: tx(['Hızlı', 'Fast']),
-        defaultPeriodMs: 10,
+        defaultPeriodMs: 20,
         fields: [
           { signal: 'velocity', byte: 0, type: 'f32' },
           { signal: 'phase.current', byte: 4, type: 'i16', scale: 0.01 },
@@ -244,7 +244,7 @@ function esc(v: EscVariant): ModelDef {
       {
         index: 1,
         label: tx(['Konum ve besleme', 'Position and supply']),
-        defaultPeriodMs: 20,
+        defaultPeriodMs: 50,
         fields: [
           { signal: 'position', byte: 0, type: 'f32' },
           { signal: 'bus.voltage', byte: 4, type: 'u16', scale: 0.01 },
@@ -254,7 +254,7 @@ function esc(v: EscVariant): ModelDef {
       {
         index: 2,
         label: tx(['Kapalı döngü', 'Closed loop']),
-        defaultPeriodMs: 50,
+        defaultPeriodMs: 100,
         fields: [
           { signal: 'setpoint', byte: 0, type: 'f32' },
           { signal: 'error', byte: 4, type: 'f32' },
@@ -263,7 +263,7 @@ function esc(v: EscVariant): ModelDef {
       {
         index: 3,
         label: tx(['Isıl ve giriş', 'Thermal and input']),
-        defaultPeriodMs: 100,
+        defaultPeriodMs: 200,
         fields: [
           { signal: 'loop.output', byte: 0, type: 'i16', scale: 0.001 },
           { signal: 'temp.fet', byte: 2, type: 'i16', scale: 0.1 },
@@ -274,7 +274,7 @@ function esc(v: EscVariant): ModelDef {
       {
         index: 4,
         label: tx(['Enerji', 'Energy']),
-        defaultPeriodMs: 500,
+        defaultPeriodMs: 1000,
         fields: [
           { signal: 'energy', byte: 0, type: 'f32' },
           { signal: 'ctrl.mode', byte: 4, type: 'u8' },
@@ -300,10 +300,10 @@ function esc(v: EscVariant): ModelDef {
     actions: [
       { cmd: 0x40, key: 'detect_direction', label: tx(['Motor yönünü algıla', 'Detect motor direction']),
         help: tx(['Motoru kısa süre döndürür ve sensör yönünü motor yönüyle eşleştirir.', 'Spins the motor briefly and matches the sensor direction to the motor.']),
-        longRunning: true, confirm: true },
+        longRunning: true, confirm: true, movesActuator: true },
       { cmd: 0x41, key: 'measure_motor', label: tx(['Motor parametrelerini ölç', 'Measure motor parameters']),
         help: tx(['Faz direncini, endüktansı ve kV değerini ölçüp ilgili ayarlara yazar; motor döner.', 'Measures phase resistance, inductance and kV and stores them; the motor will spin.']),
-        longRunning: true, confirm: true },
+        longRunning: true, confirm: true, movesActuator: true },
       { cmd: 0x42, key: 'calibrate_pwm', label: tx(['PWM girişini kalibre et', 'Calibrate PWM input']),
         help: tx(['Kumandayı sırayla orta, tam ileri ve tam geri konuma getirin; darbe sınırları kaydedilir.', 'Move the stick to center, full forward and full reverse in turn; pulse limits are stored.']),
         longRunning: true },
@@ -335,6 +335,7 @@ function esc(v: EscVariant): ModelDef {
           mode: EscMode.CURRENT,
           unit: 'A',
           gains: { kp: 'current.kp', ki: 'current.ki' },
+          openMode: 'duty',
           extraParams: ['limits.phase_current_a'],
           signals: { target: 'setpoint', measured: 'phase.current', output: 'loop.output', error: 'error' },
         },
@@ -346,6 +347,7 @@ function esc(v: EscVariant): ModelDef {
           unit: 'rpm',
           gains: { kp: 'vel.kp', ki: 'vel.ki', kd: 'vel.kd', kS: 'vel.ks', kV: 'vel.kv', kA: 'vel.ka', iMax: 'vel.i_max', outMax: 'vel.out_max' },
           extraParams: ['vel.filter_hz'],
+          openMode: 'duty',
           signals: { target: 'setpoint', measured: 'velocity', output: 'loop.output', error: 'error' },
         },
         {
@@ -356,6 +358,8 @@ function esc(v: EscVariant): ModelDef {
           unit: 'rot',
           gains: { kp: 'pos.kp', ki: 'pos.ki', kd: 'pos.kd', iMax: 'pos.i_max' },
           extraParams: ['pos.cruise_rpm', 'pos.accel_rpm_s', 'pos.tolerance_rot'],
+          openMode: 'duty',
+          integrating: true,
           signals: { target: 'setpoint', measured: 'position', output: 'loop.output', error: 'error' },
         },
       ],

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { getModel, signalByKey } from '../../src/catalog/catalog';
-import { Cls, Model, StreamReq } from '../../src/core/constants';
+import { BUS_LOAD_STREAM_LIMIT, Cls, Model, STREAM_MAX_SLOTS_CLASSIC, StreamReq } from '../../src/core/constants';
 import { idClass, idIndex } from '../../src/core/id';
+import { streamLoad } from '../../src/host/cycan/stream';
+import type { DeviceHandle } from '../../src/host/types';
 import { run } from '../helpers/fake-bus';
 import { rig } from '../helpers/setup';
 
@@ -87,7 +89,7 @@ describe('stream', () => {
     const seq = bRow[1]! - sid('velocity') * 100;
     expect(bRow).toEqual([sid('position') * 100 + seq, sid('velocity') * 100 + seq]);
     a.close();
-    await run(r.sched, 0.5, 0.5);
+    await run(r.sched, 3, 0.5);
     expect(n.streamSlots).toEqual([sid('velocity'), sid('position')]);
     await run(r.sched, 10);
     const seq2 = bRow[1]! - sid('velocity') * 100;
@@ -121,5 +123,85 @@ describe('stream', () => {
     const before = sub.samples;
     await run(r.sched, 20);
     expect(sub.samples).toBeGreaterThan(before);
+  });
+
+  for (const fd of [true, false]) {
+    it(`keeps the remaining consumer flowing with the right values when another closes (${fd ? 'FD' : 'classic'})`, async () => {
+      const { r, n, h } = await escRig(fd);
+      // CAN priority: CONFIG/START (INDEX 0/1) beat STOP (INDEX 2) when queued together.
+      r.wire.delay = (f, from) => (from === 'host' && idClass(f.id) === Cls.STREAM_REQ && idIndex(f.id) === StreamReq.STOP ? 0.5 : 0);
+      n.streamValue = (s) => s;
+      const a = h.stream.open({ signals: ['velocity', 'setpoint'], periodUs: 1000 });
+      const b = h.stream.open({ signals: ['phase.current'], periodUs: 1000 });
+      const rows: Array<{ t: number; v: number }> = [];
+      b.onData((t, v) => rows.push({ t, v: v[0]! }));
+      await run(r.sched, 20, 0.5);
+      a.close();
+      await run(r.sched, 50, 0.5);
+      for (const row of rows) expect(row.v).toBe(sid('phase.current'));
+      let gap = 0;
+      for (let i = 1; i < rows.length; i++) gap = Math.max(gap, rows[i]!.t - rows[i - 1]!.t);
+      expect(gap).toBeLessThanOrEqual(4);
+      expect(n.streaming).toBe(true);
+      expect(n.streamSlots).toEqual([sid('phase.current')]);
+    });
+  }
+
+  for (const outage of [100, 200, 400, 900]) {
+    it(`counts ${outage} ms of missing samples and keeps every good one`, async () => {
+      const { r, h } = await escRig(true);
+      const sub = h.stream.open({ signals: ['velocity'], periodUs: 1000 });
+      await run(r.sched, 50);
+      const from = r.sched.now();
+      r.wire.drop = (f, src) => src === 'node' && idClass(f.id) === Cls.STREAM_RSP && r.sched.now() >= from && r.sched.now() < from + outage;
+      const before = sub.samples;
+      await run(r.sched, outage + 300);
+      const got = sub.samples - before;
+      expect(Math.abs(sub.lost - outage)).toBeLessThanOrEqual(1);
+      expect(got + sub.lost).toBeGreaterThanOrEqual(outage + 298);
+    });
+  }
+
+  it('refuses a stream that would overload the bus, and more than 4 signals on classic CAN', async () => {
+    const r = await rig();
+    const boards = [0, 1, 2].map((i) => r.node({ model: Model.ESC_80A, seed: 330 + i, num: i + 1 }));
+    const hs: DeviceHandle[] = [];
+    for (const b of boards) hs.push(await r.ready(b));
+    const all = ESC.signals.map((x) => x.key);
+    const one = streamLoad(all.length, 1000, false);
+    expect(one).toBeGreaterThan(0.25);
+    hs[0]!.stream.open({ signals: all, periodUs: 1000 });
+    hs[1]!.stream.open({ signals: all, periodUs: 1000 });
+    expect(2 * one).toBeLessThan(BUS_LOAD_STREAM_LIMIT);
+    expect(() => hs[2]!.stream.open({ signals: all, periodUs: 1000 })).toThrow(expect.objectContaining({ code: 'NO_BANDWIDTH' }));
+    // Still refused once the load was measured, and accepted at a slower rate.
+    await run(r.sched, 1100, 5);
+    expect(() => hs[2]!.stream.open({ signals: all, periodUs: 1000 })).toThrow(expect.objectContaining({ code: 'NO_BANDWIDTH' }));
+    expect(hs[2]!.stream.open({ signals: all, periodUs: 10_000 }).periodUs).toBe(10_000);
+
+    const c = await rig({ fd: false });
+    const cn = c.node({ model: Model.ESC_20A, seed: 333, num: 1, fd: false });
+    const ch = await c.ready(cn);
+    expect(() => ch.stream.open({ signals: all.slice(0, STREAM_MAX_SLOTS_CLASSIC + 1), periodUs: 5000 })).toThrow(
+      expect.objectContaining({ code: 'NO_SLOTS', reason: 'classic_limit' }),
+    );
+    expect(ch.stream.open({ signals: all.slice(0, STREAM_MAX_SLOTS_CLASSIC), periodUs: 5000 }).signals).toHaveLength(4);
+  });
+
+  it('rebuilds a layout the board lost without a BOOT heartbeat (keepalive watchdog)', async () => {
+    const { r, n, h } = await escRig(true);
+    const sub = h.stream.open({ signals: ['velocity', 'duty'], periodUs: 2000 });
+    await run(r.sched, 100);
+    // The board restarts but its BOOT heartbeat is lost: only the stream notices.
+    r.wire.drop = (f, from) => from === 'node' && idClass(f.id) === Cls.SYS_RSP && f.data[0] === 0;
+    n.powerOff();
+    n.powerOn();
+    await run(r.sched, 600);
+    r.wire.drop = null;
+    await run(r.sched, 2200);
+    const before = sub.samples;
+    await run(r.sched, 100);
+    expect(sub.samples - before).toBeGreaterThanOrEqual(45);
+    expect(n.streamSlots).toEqual([sid('velocity'), sid('duty')]);
   });
 });

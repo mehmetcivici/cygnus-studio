@@ -23,6 +23,11 @@ export interface RequestSpec<T> {
   onProgress?: () => void;
   /** Label for TIMEOUT messages. */
   what: string;
+  /**
+   * `accept` recognises its own answer (e.g. ASSIGN_ID's echoed number), so late answers to an
+   * earlier request on the same key need not be filtered out.
+   */
+  selfMatching?: boolean;
 }
 
 interface Pending {
@@ -32,6 +37,16 @@ interface Pending {
   attemptsLeft: number;
   timer: unknown;
   started: boolean;
+  /** Frames sent so far; each may still draw an answer. */
+  sent: number;
+  /** Board answered IN_PROGRESS. */
+  inProgress: boolean;
+}
+
+/** Answers still expected to earlier transmissions of a finished request on the same key. */
+interface Stale {
+  left: number;
+  until: number;
 }
 
 /**
@@ -40,6 +55,7 @@ interface Pending {
  */
 export class RequestTracker {
   private readonly queues = new Map<string, Pending[]>();
+  private readonly stale = new Map<string, Stale>();
 
   constructor(
     private readonly scheduler: Scheduler,
@@ -56,6 +72,8 @@ export class RequestTracker {
         attemptsLeft: spec.attempts ?? Timing.REQUEST_RETRIES,
         timer: undefined,
         started: false,
+        sent: 0,
+        inProgress: false,
       };
       let q = this.queues.get(spec.key);
       if (!q) {
@@ -69,6 +87,7 @@ export class RequestTracker {
 
   /** Offers a response payload to the request waiting on `key`. Returns true if one consumed it. */
   deliver(key: string, data: Uint8Array): boolean {
+    if (this.swallowStale(key)) return true;
     const p = this.queues.get(key)?.[0];
     if (!p || !p.started) return false;
     const verdict = p.spec.accept(data);
@@ -85,6 +104,7 @@ export class RequestTracker {
       case 'progress':
         this.scheduler.clearTimeout(p.timer);
         p.attemptsLeft = 0;
+        p.inProgress = true;
         p.spec.onProgress?.();
         p.timer = this.scheduler.setTimeout(() => this.expire(p), p.spec.finalTimeoutMs ?? 60_000);
         break;
@@ -101,10 +121,37 @@ export class RequestTracker {
   failAll(error: CyError): void {
     const all = [...this.queues.values()].flat();
     this.queues.clear();
+    this.stale.clear();
     for (const p of all) {
       this.scheduler.clearTimeout(p.timer);
       p.reject(error);
     }
+  }
+
+  /** Fails the requests the board acknowledged with IN_PROGRESS (it restarted or stopped). */
+  failInProgress(error: CyError): void {
+    for (const q of [...this.queues.values()]) {
+      const p = q[0];
+      if (!p?.inProgress) continue;
+      this.finish(p, false);
+      p.reject(error);
+    }
+  }
+
+  /**
+   * A retransmitted request can draw one answer per copy. Once it has finished, the answers
+   * still on their way belong to it and not to the next request on the same key (which would
+   * otherwise take, say, the previous SET's value as its own).
+   */
+  private swallowStale(key: string): boolean {
+    const st = this.stale.get(key);
+    if (!st) return false;
+    if (st.left <= 0 || this.scheduler.now() > st.until) {
+      this.stale.delete(key);
+      return false;
+    }
+    st.left--;
+    return true;
   }
 
   private begin(p: Pending): void {
@@ -114,6 +161,7 @@ export class RequestTracker {
 
   private transmit(p: Pending): void {
     p.attemptsLeft--;
+    p.sent++;
     p.timer = this.scheduler.setTimeout(() => this.expire(p), p.spec.timeoutMs ?? Timing.REQUEST_TIMEOUT_MS);
     this.send(p.spec.frame());
   }
@@ -124,12 +172,17 @@ export class RequestTracker {
       this.transmit(p);
       return;
     }
-    this.finish(p);
+    this.finish(p, false);
     p.reject(new CyError('TIMEOUT', `${p.spec.what}: no answer`));
   }
 
-  private finish(p: Pending): void {
+  /** `answered`: the request consumed one answer, so one fewer may still be in flight. */
+  private finish(p: Pending, answered = true): void {
     this.scheduler.clearTimeout(p.timer);
+    const late = p.sent - (answered ? 1 : 0);
+    if (late > 0 && !p.spec.selfMatching) {
+      this.stale.set(p.spec.key, { left: late, until: this.scheduler.now() + (p.spec.timeoutMs ?? Timing.REQUEST_TIMEOUT_MS) });
+    }
     const q = this.queues.get(p.spec.key);
     if (!q) return;
     const i = q.indexOf(p);

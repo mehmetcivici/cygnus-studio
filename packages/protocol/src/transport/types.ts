@@ -6,6 +6,11 @@ export interface TransportState {
   phase: TransportPhase;
   /** Human-readable reason when phase is 'error'. */
   error?: string;
+  /**
+   * Set on 'open' when the link works with less than asked for. `fd_unsupported`: the adapter
+   * refused the CAN-FD data rate and runs classic CAN (`info.fd` is false).
+   */
+  notice?: 'fd_unsupported';
 }
 
 export interface TransportInfo {

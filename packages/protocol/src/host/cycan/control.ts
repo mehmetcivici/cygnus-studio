@@ -1,9 +1,9 @@
 import type { ControlFrameDef, ControlModeDef } from '../../catalog/schema';
 import { Timing } from '../../core/constants';
-import type { TxFrame } from '../../core/frame';
+import type { Address, TxFrame } from '../../core/frame';
 import { encodeCtrlServo, encodeCtrlSet, encodeCtrlText } from '../../core/messages';
 import { CyError } from '../errors';
-import type { ControlFields, ControlLoop, DeviceControl } from '../types';
+import type { ControlFields, ControlLoop, ControlStopCallback, ControlStopReason, DeviceControl } from '../types';
 import type { CyCanDevice } from './device';
 
 const DEFAULT_RATE_HZ = 50;
@@ -11,12 +11,17 @@ const MIN_PERIOD_MS = 5;
 
 interface SessionFrame {
   def: ControlFrameDef;
-  frame: TxFrame;
+  /** Validated fields; the frame is encoded on every send so a number change is honoured. */
+  fields: ControlFields;
 }
+
+/** Reasons where nothing can (lost, link down) or should (host ESTOP: only ESTOP frames now) be sent. */
+const SILENT: ReadonlySet<ControlStopReason> = new Set<ControlStopReason>(['estop', 'lost', 'disconnected']);
 
 /**
  * Actuator commands. A device has at most one periodic session; it re-sends every frame it
- * holds fast enough to beat `ctrl.timeout_ms`, and `stop()` follows up with neutral frames.
+ * holds fast enough to beat `ctrl.timeout_ms`. A frame joining the session is preceded by its
+ * neutral command (PROTOCOL §7 neutral-first rule), and ending the session sends neutral again.
  */
 export class CyCanControl implements DeviceControl {
   private readonly session = new Map<string, SessionFrame>();
@@ -24,10 +29,15 @@ export class CyCanControl implements DeviceControl {
   private period = 1000 / DEFAULT_RATE_HZ;
   /** Bumped whenever the session ends, so stale ControlLoop handles go inert. */
   private generation = 0;
+  private listeners = new Set<ControlStopCallback>();
+  /** Reason the session of each ended generation stopped (only the latest few are looked up). */
+  private readonly reasons = new Map<number, ControlStopReason>();
+  /** Host time the last session ended; the heartbeat ENABLED bit lags by up to one beat. */
+  endedAt = -Infinity;
   private readonly tick = (): void => {
     const gen = this.generation;
     this.timer = undefined;
-    for (const s of this.session.values()) this.dev.send(s.frame);
+    for (const s of this.session.values()) this.dev.send(this.encode(s.def, s.fields));
     // A send may synchronously take the link down and halt the session.
     if (gen !== this.generation || this.session.size === 0) return;
     this.timer = this.dev.ctx.scheduler.setTimeout(this.tick, this.period);
@@ -43,64 +53,121 @@ export class CyCanControl implements DeviceControl {
     return this.period;
   }
 
-  set(mode: number | string, value: number): void {
-    const def = this.setFrameDef();
-    this.dev.send(this.encode(def, { mode, value }));
+  /** True while the session holds at least one non-neutral command. */
+  get driving(): boolean {
+    for (const s of this.session.values()) if (!isNeutral(s.def, s.fields)) return true;
+    return false;
   }
 
-  start(mode: number | string, value: number, opts: { rateHz?: number } = {}): ControlLoop {
+  set(mode: number | string, value: number): void {
     const def = this.setFrameDef();
-    this.hold(def, this.encode(def, { mode, value }), opts.rateHz);
+    this.oneShot(def, { mode, value });
+  }
+
+  start(mode: number | string, value: number, opts: { rateHz?: number; onStopped?: ControlStopCallback } = {}): ControlLoop {
+    const def = this.setFrameDef();
+    this.hold(def, { mode, value }, opts.rateHz);
     const gen = this.generation;
     let curMode = mode;
     const live = (): boolean => gen === this.generation && this.session.has(def.key);
+    const onStopped = (cb: ControlStopCallback): (() => void) => {
+      if (gen !== this.generation) {
+        cb(this.reasons.get(gen) ?? 'stopped');
+        return () => undefined;
+      }
+      this.listeners.add(cb);
+      return () => {
+        this.listeners.delete(cb);
+      };
+    };
+    if (opts.onStopped) onStopped(opts.onStopped);
+    const reason = (): ControlStopReason | null => (gen === this.generation ? null : (this.reasons.get(gen) ?? 'stopped'));
     return {
       get active() {
         return live();
       },
+      get stopReason() {
+        return reason();
+      },
       update: (v: number) => {
         if (!live()) return;
-        this.session.set(def.key, { def, frame: this.encode(def, { mode: curMode, value: v }) });
+        const fields = { mode: curMode, value: v };
+        this.encode(def, fields);
+        this.session.set(def.key, { def, fields });
       },
       setMode: (m: number | string, v = 0) => {
         if (!live()) return;
-        const frame = this.encode(def, { mode: m, value: v });
+        const fields = { mode: m, value: v };
+        this.encode(def, fields);
         curMode = m;
-        this.session.set(def.key, { def, frame });
+        this.session.set(def.key, { def, fields });
       },
       stop: () => {
         if (live()) this.stop();
       },
+      onStopped,
     };
   }
 
   send(controlKey: string, fields: ControlFields, opts: { repeat?: boolean; rateHz?: number } = {}): void {
     const def = this.frameDef(controlKey);
-    const frame = this.encode(def, fields);
-    if (opts.repeat) this.hold(def, frame, opts.rateHz);
-    else this.dev.send(frame);
+    if (opts.repeat) this.hold(def, fields, opts.rateHz);
+    else this.oneShot(def, fields);
   }
 
   stop(): void {
-    const frames = [...this.session.values()];
-    this.halt();
-    for (const s of frames) {
-      const neutral = this.neutral(s.def);
-      if (neutral) this.dev.send(neutral);
-    }
+    this.end('stopped');
   }
 
-  /** Ends the session without sending anything (ESTOP, lost board, transport down). */
-  halt(): void {
+  /**
+   * Ends the session for `reason`. A neutral command follows unless the reason makes sending
+   * pointless; `neutralTo` overrides the address (the old one after a number change).
+   */
+  halt(reason: ControlStopReason, neutralTo?: Address): void {
+    this.end(reason, neutralTo);
+  }
+
+  private end(reason: ControlStopReason, neutralTo?: Address): void {
+    if (this.timer === undefined && this.session.size === 0) return;
+    const frames = [...this.session.values()];
     if (this.timer !== undefined) this.dev.ctx.scheduler.clearTimeout(this.timer);
     this.timer = undefined;
     this.session.clear();
+    this.reasons.set(this.generation, reason);
+    this.reasons.delete(this.generation - 8);
     this.generation++;
+    this.endedAt = this.dev.ctx.scheduler.now();
+    if (!SILENT.has(reason) && this.dev.ctx.isOpen()) {
+      const addr = neutralTo ?? this.dev.address;
+      for (const s of frames) {
+        const n = this.neutral(s.def, addr);
+        if (n) this.dev.send(n);
+      }
+    }
+    const cbs = [...this.listeners];
+    this.listeners = new Set();
+    for (const cb of cbs) cb(reason);
+    this.dev.emitControlStopped(reason);
   }
 
-  private hold(def: ControlFrameDef, frame: TxFrame, rateHz?: number): void {
+  private oneShot(def: ControlFrameDef, fields: ControlFields): void {
+    const frame = this.encode(def, fields);
+    if (!this.session.has(def.key) && !isNeutral(def, fields)) {
+      const n = this.neutral(def, this.dev.address);
+      if (n) this.dev.send(n);
+    }
+    this.dev.send(frame);
+  }
+
+  private hold(def: ControlFrameDef, fields: ControlFields, rateHz?: number): void {
+    this.encode(def, fields);
     this.period = this.periodFor(rateHz);
-    this.session.set(def.key, { def, frame });
+    if (!this.session.has(def.key)) {
+      // The board only accepts a target after a neutral command (PROTOCOL §7).
+      const n = this.neutral(def, this.dev.address);
+      if (n) this.dev.send(n);
+    }
+    this.session.set(def.key, { def, fields });
     if (this.timer === undefined) this.tick();
   }
 
@@ -130,6 +197,7 @@ export class CyCanControl implements DeviceControl {
     this.dev.requireResolved();
   }
 
+  /** Validates `fields` and encodes them for the board's current address. */
   private encode(def: ControlFrameDef, fields: ControlFields): TxFrame {
     const addr = this.dev.address;
     switch (def.format) {
@@ -156,15 +224,25 @@ export class CyCanControl implements DeviceControl {
   }
 
   /** Neutral command per frame format; text frames have none. */
-  private neutral(def: ControlFrameDef): TxFrame | null {
-    const addr = this.dev.address;
-    if (def.format === 'set') {
-      const off = def.modes?.find((m) => m.key === 'off')?.value ?? 0;
-      return encodeCtrlSet(addr, { mode: off, flags: 0, value: 0 });
-    }
+  private neutral(def: ControlFrameDef, addr: Address): TxFrame | null {
+    if (def.format === 'set') return encodeCtrlSet(addr, { mode: offMode(def), flags: 0, value: 0 });
     if (def.format === 'servo4') return encodeCtrlServo(addr, { index: def.index, pulsesUs: [0, 0, 0, 0] });
     return null;
   }
+}
+
+function offMode(def: ControlFrameDef): number {
+  return def.modes?.find((m) => m.key === 'off')?.value ?? 0;
+}
+
+/** Whether `fields` already is the neutral command of its frame (text frames never drive). */
+function isNeutral(def: ControlFrameDef, fields: ControlFields): boolean {
+  if (def.format === 'set' && 'mode' in fields) {
+    const m = typeof fields.mode === 'number' ? fields.mode : def.modes?.find((x) => x.key === fields.mode)?.value;
+    return m === offMode(def) && fields.value === 0;
+  }
+  if (def.format === 'servo4' && 'pulsesUs' in fields) return fields.pulsesUs.every((p) => p === 0);
+  return def.format === 'text';
 }
 
 function findMode(def: ControlFrameDef, mode: number | string): ControlModeDef {

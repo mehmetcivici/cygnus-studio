@@ -2,13 +2,14 @@ import { actionByCmd, getModel, paramByKey, statusFrameByIndex } from '../../cat
 import { COMMON_COMMANDS, COMMON_FAULTS } from '../../catalog/common';
 import type { BitDef, ModelDef, ParamDef } from '../../catalog/schema';
 import { decodeStatusFrameInto } from '../../catalog/status';
-import { checkParamValue } from '../../catalog/values';
+import { checkParamValue, quantizeParamValue } from '../../catalog/values';
 import { f32ToBits, readU16, toHex } from '../../core/bytes';
 import {
   Cls,
   Command,
   CommandStatus,
   DeviceState,
+  ENTER_BOOTLOADER_INTENT,
   FwRsp,
   InfoPage,
   NAME_BYTES,
@@ -47,6 +48,7 @@ import type {
   CatalogStatus,
   CommandOptions,
   CommandResult,
+  ControlStopReason,
   DeviceCapabilities,
   DeviceEventKind,
   DeviceEvents,
@@ -127,6 +129,8 @@ export class CyCanDevice implements DeviceHandle {
   private infoRetryAt = 0;
   private faultReadPending = false;
   private removed = false;
+  /** Streams are rebuilt once the board that restarted reports a running state again. */
+  private streamRestorePending = false;
 
   constructor(
     private readonly host: DeviceHost,
@@ -201,20 +205,26 @@ export class CyCanDevice implements DeviceHandle {
   /** ENUM_RSP from this board (discovery round or ASSIGN_ID confirmation). */
   applyEnum(rsp: EnumRsp, devType: number, now: number): void {
     let changed = this.touch(now, true);
+    let renumbered = false;
     if (rsp.num !== this.num || devType !== this.devType) {
-      const oldType = this.devType;
-      const oldNum = this.num;
+      const old: Address = { devType: this.devType, num: this.num };
       this.num = rsp.num;
       this.devType = devType;
-      this.host.reindex(this, oldType, oldNum);
+      this.host.reindex(this, old.devType, old.num);
+      // The old address may now belong to another board: never keep driving it (PROTOCOL §7).
+      // The neutral goes to the old address, where this board's last commands went.
+      this.control.halt('renumbered', old);
+      renumbered = true;
       changed = true;
     }
     if (rsp.conflict !== this.conflict || rsp.bootloader !== this.enumBootloader) {
       this.conflict = rsp.conflict;
       this.enumBootloader = rsp.bootloader;
-      if (this.conflict || this.unassigned) this.control.halt();
       changed = true;
     }
+    if (this.conflict || this.unassigned) this.control.halt('unresolved');
+    // A renumbered board stops streaming (PROTOCOL §3.3); lay the stream out again at the new address.
+    else if (renumbered) this.stream.deviceBack();
     if (rsp.model !== this.model) {
       this.setModel(rsp.model);
       changed = true;
@@ -227,6 +237,11 @@ export class CyCanDevice implements DeviceHandle {
     let changed = this.touch(now, true);
     const prevState = this.state;
     const f = this.flags;
+    this.superviseControl(hb, f.enabled);
+    if (hb.state === DeviceState.BOOT && prevState !== DeviceState.BOOT) this.restarted();
+    else if (hb.state === DeviceState.ESTOP && prevState !== DeviceState.ESTOP) {
+      this.requests.failInProgress(new CyError('ABORTED', 'board is in emergency stop', { reason: 'estop' }));
+    }
     if (
       hb.state !== this.state ||
       hb.unsaved !== f.unsaved ||
@@ -256,9 +271,50 @@ export class CyCanDevice implements DeviceHandle {
       // Left the bootloader: firmware (and possibly the catalog revision) changed.
       this.invalidateInfo();
     }
+    if (this.streamRestorePending && hb.state !== DeviceState.BOOT && hb.state !== DeviceState.BOOTLOADER) {
+      this.streamRestorePending = false;
+      this.stream.deviceBack();
+    }
     if (changed) this.changed();
     if (faultsMoved) this.refreshFaults();
     this.maybeLoadInfo(now);
+  }
+
+  /** PROTOCOL §7: the host stops driving a board that is no longer driven or able to be. */
+  private superviseControl(hb: Heartbeat, wasEnabled: boolean): void {
+    if (!this.control.active) return;
+    let reason: ControlStopReason | null = null;
+    if (hb.state === DeviceState.BOOT) reason = 'boardReset';
+    else if (hb.state === DeviceState.ESTOP) reason = 'boardEstop';
+    else if (hb.state === DeviceState.FAULT) reason = 'boardFault';
+    else if (hb.state === DeviceState.BOOTLOADER) reason = 'bootloader';
+    else if (wasEnabled && !hb.enabled && this.control.driving) reason = 'disabled';
+    if (reason) this.control.halt(reason);
+  }
+
+  /**
+   * The board restarted (heartbeat `state = BOOT`, PROTOCOL §4.1): RAM parameters, INFO and
+   * stream slots are gone and long commands will never finish. Streams are rebuilt once the
+   * board runs again.
+   */
+  private restarted(): void {
+    this.invalidateInfo();
+    this.requests.failInProgress(new CyError('ABORTED', 'board restarted', { reason: 'board_reset' }));
+    if (this.stream.active) this.streamRestorePending = true;
+  }
+
+  emitControlStopped(reason: ControlStopReason): void {
+    this.events.emit('controlStopped', { reason });
+  }
+
+  /**
+   * True while this host drives the board, or the board reports ENABLED and this host did not
+   * stop a session of its own within the last heartbeat period (the flag lags behind).
+   */
+  get driven(): boolean {
+    if (this.control.active) return true;
+    const sinceStop = this.host.ctx.scheduler.now() - this.control.endedAt;
+    return this.online && this.flags.enabled && sinceStop > Timing.HEARTBEAT_MS + Timing.HEARTBEAT_PHASE_MAX_MS;
   }
 
   handleFrame(frame: CanFrame, cls: number, index: number): void {
@@ -317,7 +373,7 @@ export class CyCanDevice implements DeviceHandle {
   markLost(): void {
     if (!this.online) return;
     this.online = false;
-    this.control.halt();
+    this.control.halt('lost');
     this.host.notify(this, 'deviceLost');
     this.events.emit('changed', this);
   }
@@ -325,7 +381,7 @@ export class CyCanDevice implements DeviceHandle {
   /** Transport down: offline without event storms of retries. */
   transportDown(error: CyError): void {
     this.requests.failAll(error);
-    this.control.halt();
+    this.control.halt('disconnected');
     this.stream.halt();
     this.firmware.abortAll(error);
     this.cancelLostTimer();
@@ -336,7 +392,7 @@ export class CyCanDevice implements DeviceHandle {
   dispose(error: CyError): void {
     this.removed = true;
     this.requests.failAll(error);
-    this.control.halt();
+    this.control.halt('disconnected');
     this.stream.halt();
     this.firmware.abortAll(error);
     this.cancelLostTimer();
@@ -474,11 +530,13 @@ export class CyCanDevice implements DeviceHandle {
       const check = checkParamValue(p, value);
       if (check !== 'ok') throw new CyError('INVALID', `${key}: ${check}`, { reason: check });
       this.requireResolved();
-      return this.paramRequest(p, () => encodeParamSet(this.address, { pid: p.pid, ptype: p.ptype, value }), true);
+      const expect = quantizeParamValue(p, value);
+      return this.paramRequest(p, () => encodeParamSet(this.address, { pid: p.pid, ptype: p.ptype, value }), true, expect);
     });
   }
 
-  private paramRequest(p: ParamDef, frame: () => TxFrame, isSet: boolean): Promise<number> {
+  /** `expect`: for a SET, the value an accepting board must report; any other OK answer is a stale one. */
+  private paramRequest(p: ParamDef, frame: () => TxFrame, isSet: boolean, expect?: number): Promise<number> {
     return this.requests.request<number>({
       key: `p:${p.pid}`,
       what: `${isSet ? 'SET' : 'GET'} ${p.key}`,
@@ -487,6 +545,7 @@ export class CyCanDevice implements DeviceHandle {
         const v = decodeParamValue(d);
         if (!v) return null;
         if (v.status === ParamStatus.OK) {
+          if (expect !== undefined && v.value !== expect) return null;
           this.storeParam(p.key, v.value);
           return { kind: 'done', value: v.value };
         }
@@ -543,6 +602,12 @@ export class CyCanDevice implements DeviceHandle {
 
   async loadDefaults(): Promise<void> {
     await this.command(Command.LOAD_DEFAULTS);
+    this.cache.clear();
+    this.events.emit('paramsInvalidated', this);
+  }
+
+  async loadSaved(): Promise<void> {
+    await this.command(Command.LOAD_SAVED);
     this.cache.clear();
     this.events.emit('paramsInvalidated', this);
   }
@@ -650,6 +715,8 @@ export class CyCanDevice implements DeviceHandle {
     if (cmd === undefined || !Number.isInteger(cmd) || cmd < 1 || cmd > 0xff) {
       throw new CyError('INVALID', `unknown command ${String(keyOrCmd)}`, { reason: 'unknown_command' });
     }
+    // Asking for ENTER_BOOTLOADER by name is the intent; the board wants it spelled out (PROTOCOL §4.5).
+    if (cmd === Command.ENTER_BOOTLOADER && arg === 0) return { cmd, wire: this.enterBootloaderArg };
     const action = this.def ? actionByCmd(this.def, cmd) : undefined;
     if (!action?.arg) {
       if (!Number.isFinite(arg)) throw new CyError('INVALID', 'command argument', { reason: 'not_number' });
@@ -661,6 +728,11 @@ export class CyCanDevice implements DeviceHandle {
     }
     if (a.ptype === PType.F32) return { cmd, wire: f32ToBits(arg) };
     return { cmd, wire: Math.round(arg) >>> 0 };
+  }
+
+  /** `ENTER_BOOTLOADER` intent argument for this board. */
+  get enterBootloaderArg(): number {
+    return (ENTER_BOOTLOADER_INTENT | this.uid16) >>> 0;
   }
 
   identify(seconds: number): Promise<void> {

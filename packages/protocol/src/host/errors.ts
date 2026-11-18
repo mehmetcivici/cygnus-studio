@@ -14,8 +14,10 @@ export type CyErrorCode =
   | 'INVALID'
   /** The board is unassigned or in conflict and only answers discovery messages. */
   | 'UNRESOLVED'
-  /** Every stream slot (15) is taken. */
+  /** Every stream slot (15, classic CAN: 4) is taken. */
   | 'NO_SLOTS'
+  /** Opening the stream would push the estimated bus load over the limit (PROTOCOL §10.1). */
+  | 'NO_BANDWIDTH'
   /** Another operation of the same kind is running (e.g. a firmware update). */
   | 'BUSY'
   /** Cancelled through an abort signal. */

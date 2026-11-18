@@ -165,6 +165,7 @@ export const COMMON_COMMANDS: ReadonlyArray<{ cmd: number; key: string; label: T
   { cmd: Command.CLEAR_FAULTS, key: 'clear_faults', label: tx(['Hataları temizle', 'Clear faults']) },
   { cmd: Command.SELF_TEST, key: 'self_test', label: tx(['Öz-test', 'Self-test']) },
   { cmd: Command.CLEAR_ESTOP, key: 'clear_estop', label: tx(['Acil durdurmayı kaldır', 'Clear emergency stop']) },
+  { cmd: Command.LOAD_SAVED, key: 'load_saved', label: tx(['Kayıtlı ayarları geri yükle', 'Reload saved settings']) },
 ];
 
 export const DEVICE_STATE_LABELS: Readonly<Record<number, Text>> = {

@@ -215,6 +215,7 @@ export function validateModel(def: ModelDef): CatalogIssue[] {
     const ctrl = def.controls.find((c) => c.index === l.ctrlFrame);
     if (!ctrl) add(at, `unknown CTRL frame ${l.ctrlFrame}`);
     else if (!ctrl.modes?.some((m) => m.value === l.mode)) add(at, `CTRL frame has no mode ${l.mode}`);
+    else if (l.openMode !== undefined && !ctrl.modes.some((m) => m.key === l.openMode)) add(at, `CTRL frame has no mode '${l.openMode}'`);
     for (const [role, key] of Object.entries(l.gains)) {
       if (key !== undefined && !pkeys.has(key)) add(at, `gain ${role} refers to unknown parameter '${key}'`);
     }
