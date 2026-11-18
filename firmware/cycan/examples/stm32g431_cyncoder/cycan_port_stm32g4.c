@@ -30,7 +30,7 @@ uint8_t port_dlc_to_len(uint32_t hal_dlc)
 
 /* ---- CAN ------------------------------------------------------------------------- */
 
-static bool port_can_send(void *ctx, const cycan_frame_t *f)
+bool port_can_send(void *ctx, const cycan_frame_t *f)
 {
     FDCAN_TxHeaderTypeDef h;
     (void)ctx;
@@ -125,7 +125,7 @@ uint32_t port_now_us(void)
 
 /* ---- UID, randomness, LED -------------------------------------------------------- */
 
-static void port_uid96(void *ctx, uint8_t out[12])
+void port_uid96(void *ctx, uint8_t out[12])
 {
     (void)ctx;
     memcpy(out, (const void *)UID_BASE, 12); /* 0x1FFF7590 on G4: INFO page byte order */
@@ -133,7 +133,7 @@ static void port_uid96(void *ctx, uint8_t out[12])
 
 /* The G431 has no RNG peripheral; the cycle counter's low bits at bus-event times jitter
  * enough to separate boards that collided once. */
-static uint32_t port_random(void *ctx)
+uint32_t port_random(void *ctx)
 {
     (void)ctx;
     return DWT->CYCCNT ^ (TIM2->CNT << 16) ^ *(const uint32_t *)UID_BASE;
@@ -145,32 +145,33 @@ static void port_led(void *ctx, bool on)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, on ? GPIO_PIN_SET : GPIO_PIN_RESET); /* board LED */
 }
 
-/* ---- Storage: one flash page per region ------------------------------------------- */
+/* ---- Storage: A/B slots, one flash page each ------------------------------------- */
 
-static uint32_t region_addr(uint8_t region)
+static uint32_t slot_page(uint8_t slot)
 {
-    return PORT_PAGE_ADDR(region == CYCAN_REGION_IDENTITY ? PORT_IDENTITY_PAGE : PORT_PARAMS_PAGE);
+    return slot == CYCAN_STORE_SLOT_A ? PORT_SLOT_A_PAGE : PORT_SLOT_B_PAGE;
 }
 
-static bool port_read(void *ctx, uint8_t region, uint32_t off, void *buf, uint32_t len)
+bool port_storage_read(void *ctx, uint8_t slot, uint32_t off, void *buf, uint32_t len)
 {
     (void)ctx;
-    if (off + len > PORT_FLASH_PAGE_SIZE) return false;
-    memcpy(buf, (const void *)(region_addr(region) + off), len);
+    if (slot > 1u || off > PORT_FLASH_PAGE_SIZE || len > PORT_FLASH_PAGE_SIZE - off) return false;
+    memcpy(buf, (const void *)(PORT_PAGE_ADDR(slot_page(slot)) + off), len);
     return true;
 }
 
 /* Blocks for ~22 ms (single bank: the CPU stalls on flash fetches meanwhile). The library
- * only erases on SAVE_PARAMS / ASSIGN_ID with persist, never while driving is expected. */
-static bool port_erase(void *ctx, uint8_t region)
+ * refuses every erase (SAVE_PARAMS, persistent ASSIGN_ID) while an actuator is driven. */
+bool port_storage_erase(void *ctx, uint8_t slot)
 {
     FLASH_EraseInitTypeDef e;
     uint32_t err = 0;
     HAL_StatusTypeDef st;
     (void)ctx;
+    if (slot > 1u) return false;
     e.TypeErase = FLASH_TYPEERASE_PAGES;
     e.Banks = FLASH_BANK_1;
-    e.Page = region == CYCAN_REGION_IDENTITY ? PORT_IDENTITY_PAGE : PORT_PARAMS_PAGE;
+    e.Page = slot_page(slot);
     e.NbPages = 1;
     HAL_FLASH_Unlock();
     st = HAL_FLASHEx_Erase(&e, &err);
@@ -178,13 +179,16 @@ static bool port_erase(void *ctx, uint8_t region)
     return st == HAL_OK;
 }
 
-static bool port_write(void *ctx, uint8_t region, uint32_t off, const void *buf, uint32_t len)
+/* Double words may be programmed in any order after an erase; the store programs its
+ * commit block (offset 0) last. */
+bool port_storage_write(void *ctx, uint8_t slot, uint32_t off, const void *buf, uint32_t len)
 {
     const uint8_t *p = (const uint8_t *)buf;
-    uint32_t addr = region_addr(region) + off, i;
+    uint32_t addr, i;
     bool ok = true;
     (void)ctx;
-    if (off + len > PORT_FLASH_PAGE_SIZE) return false;
+    if (slot > 1u || off > PORT_FLASH_PAGE_SIZE || len > PORT_FLASH_PAGE_SIZE - off) return false;
+    addr = PORT_PAGE_ADDR(slot_page(slot)) + off;
     HAL_FLASH_Unlock();
     for (i = 0; i < len && ok; i += 8u) { /* the library guarantees 8-byte blocks */
         uint64_t dw;
@@ -207,11 +211,11 @@ static void port_reboot(void *ctx)
 static void port_enter_bootloader(void *ctx)
 {
     (void)ctx;
-    g_port_boot_request = PORT_BOOT_MAGIC;
+    g_port_boot_request = PORT_BOOT_STAY;
     NVIC_SystemReset();
 }
 
 const cycan_hal_t g_port_hal = {
-    NULL,          port_can_send, port_uid96,   port_read,   port_erase, port_write,
-    port_reboot,   port_enter_bootloader,       port_led,    port_random,
+    NULL,        port_can_send,         port_uid96, port_storage_read, port_storage_erase, port_storage_write,
+    port_reboot, port_enter_bootloader, port_led,   port_random,
 };

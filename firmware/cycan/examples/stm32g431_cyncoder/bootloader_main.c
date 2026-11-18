@@ -1,8 +1,10 @@
 /*
  * Cyncoder bootloader on CyCAN (flash 0x08000000..0x08003FFF). Reference skeleton.
  *
- * Image area: pages 8..61 (0x08004000, 108 KB). The .cyfw header sits at 0x08004000; the
+ * Image area: pages 8..60 (0x08004000, 106 KB). The .cyfw header sits at 0x08004000; the
  * application is linked at 0x08004040 with its vector table aligned up to 0x08004200.
+ * Pages 61/62 hold the A/B parameter store shared with the application (NUM and
+ * can.data_bitrate are read from there by the library).
  */
 #include <string.h>
 
@@ -13,21 +15,10 @@
 
 #define IMAGE_BASE 0x08004000ul
 #define IMAGE_FIRST_PAGE 8u
-#define IMAGE_PAGES 54u
+#define IMAGE_PAGES 53u
 #define APP_VECTORS 0x08004200ul
 
 extern FDCAN_HandleTypeDef hfdcan1;
-
-/* CAN, UID and the identity page are shared with the application's port. */
-static bool bl_send(void *ctx, const cycan_frame_t *f)
-{
-    return g_port_hal.can_send(ctx, f);
-}
-
-static void bl_uid(void *ctx, uint8_t out[12])
-{
-    g_port_hal.uid96(ctx, out);
-}
 
 static bool bl_erase(void *ctx, uint32_t size)
 {
@@ -79,24 +70,26 @@ static void jump_to_app(void)
     ((void (*)(void))vt[1])();
 }
 
+/* The library has verified the image: reset for clean peripherals and jump straight away
+ * (no second recovery window). */
 static void bl_start_app(void *ctx)
 {
     (void)ctx;
-    g_port_boot_request = 0;
-    NVIC_SystemReset(); /* clean peripheral state; the reset path below jumps */
+    g_port_boot_request = PORT_BOOT_START;
+    NVIC_SystemReset();
 }
 
-static bool bl_identity_save(void *ctx, uint8_t num)
+/* Configures FDCAN with the stored can.data_bitrate (finding 16: not a fixed 2 Mbit/s). */
+static void bl_can_config(void *ctx, uint8_t data_bitrate)
 {
-    uint8_t rec[CYCAN_IDENTITY_SIZE];
-    cycan_identity_encode(rec, num);
-    return g_port_hal.storage_erase(ctx, CYCAN_REGION_IDENTITY) &&
-           g_port_hal.storage_write(ctx, CYCAN_REGION_IDENTITY, 0, rec, sizeof rec);
+    (void)ctx;
+    port_can_start(data_bitrate);
 }
 
 static const cycan_boot_hal_t k_bl_hal = {
-    NULL, bl_send, bl_uid, IMAGE_PAGES * PORT_FLASH_PAGE_SIZE, bl_erase, bl_write, bl_read,
-    bl_start_app, NULL, NULL, bl_identity_save,
+    NULL,          port_can_send, port_uid96,  bl_can_config,     IMAGE_PAGES * PORT_FLASH_PAGE_SIZE,
+    bl_erase,      bl_write,      bl_read,     bl_start_app,      NULL,
+    port_random,   port_storage_read,          port_storage_erase, port_storage_write,
 };
 
 static cycan_boot_t g_bl;
@@ -104,23 +97,25 @@ static cycan_boot_t g_bl;
 void bootloader_main(void)
 {
     cycan_boot_cfg_t cfg;
-    uint8_t rec[CYCAN_IDENTITY_SIZE];
-    memcpy(rec, (const void *)PORT_PAGE_ADDR(PORT_IDENTITY_PAGE), sizeof rec);
+    uint32_t request = g_port_boot_request;
+    g_port_boot_request = 0;
+    if (request == PORT_BOOT_START) jump_to_app();
+
     cfg.model = CYCAN_MODEL_CYNCODER;
     cfg.devtype = CYCAN_CYNCODER_DEVTYPE;
     cfg.hw_rev = 2;
-    cfg.bootloader_ver = 1;
+    cfg.bootloader_ver = 2;
     cfg.catalog_rev = CYCAN_CYNCODER_CATALOG_REV;
-    cfg.num = cycan_identity_decode(rec);
     cfg.window = 0;
+    cfg.data_bitrate_default = 1; /* catalog default of can.data_bitrate */
+    cfg.stay = request == PORT_BOOT_STAY;
+    /* Reads NUM and can.data_bitrate from the store, starts CAN through bl_can_config(),
+     * checks the image. With a valid image and no stay request it then listens 150 ms for
+     * the recovery broadcast (PROTOCOL 9.0) before calling bl_start_app(). */
     cycan_boot_init(&g_bl, &cfg, &k_bl_hal, port_now_us());
 
-    /* Normal reset with a valid image: start it at once. */
-    if (g_port_boot_request != PORT_BOOT_MAGIC && cycan_boot_image_valid(&g_bl)) jump_to_app();
-    g_port_boot_request = 0;
-
-    /* The bootloader has no RX interrupt: frames are pulled here and fed in order. */
-    port_can_start(1); /* FD 2 Mbit/s data phase: 61-byte chunks */
+    /* The bootloader has no RX interrupt: frames are pulled here and fed in order, one poll
+     * per frame, so its 4-entry ring never overflows. */
     for (;;) {
         FDCAN_RxHeaderTypeDef h;
         uint8_t buf[64];

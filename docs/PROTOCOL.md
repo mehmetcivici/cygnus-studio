@@ -247,7 +247,9 @@ status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ER
 - Pencere sayacı her `ACK`'tan sonra (BAD_OFFSET dahil) sıfırlanır. Son, eksik kalan pencere için ayrıca `ACK` gönderilmez; onu `END`'in `ACK`'ı kapatır.
 - Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner. Aktarım sürerken gelen yeni `BEGIN` aktarımı baştan başlatır; `END` sonrası doğrulama/başlatma sürerken gelen FW_REQ `BUSY` döner.
 - Host, `END` onayı kaybolursa kartın HEARTBEAT sürümüne bakarak güncellemenin başarısını doğrular.
-- Bootloader, kalıcı `can.data_bitrate` ayarıyla çalışır (ayar alanı geçersizse klasik kip). Host parça boyunu hattın kipine göre seçer.
+- Bootloader, kalıcı `can.data_bitrate` ayarıyla çalışır (kayıt yoksa katalog varsayılanı; ayar alanı bozuksa klasik kip).
+- Başlık (ilk 64 bayt) tamamlanınca kart silme süresince `BUSY`, ardından `OK` + `next_offset = 64` döner; host 64. bayttan devam eder.
+- Geçerli imaj yokken `COMMAND REBOOT` `FAILED` döner (başlatılacak uygulama yok). Host parça boyunu hattın kipine göre seçer.
 - Bootloader HEARTBEAT'inin sürüm alanları kurulu imajın sürümünü taşır (geçerli imaj yoksa 0.0.0).
 - Bootloader `HEARTBEAT` (state = BOOTLOADER), `ENUM_REQ`, `ASSIGN_ID`, `IDENTIFY`, `INFO_REQ` sayfa 0–2 ve `COMMAND REBOOT`'a yanıt verir; diğer her şeye yanıtsız kalır.
 
