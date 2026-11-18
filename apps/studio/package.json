@@ -16,6 +16,7 @@
   "dependencies": {
     "@cygnus/protocol": "*",
     "@cygnus/simulator": "*",
+    "@cygnus/vehicles": "*",
     "@fontsource/jetbrains-mono": "^5.1.0",
     "@fontsource/lato": "^5.1.0",
     "@tauri-apps/api": "^2.1.0",

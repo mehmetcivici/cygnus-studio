@@ -1,0 +1,270 @@
+/* Slots filled by the core services (connection, health, E-STOP latch, status items). */
+
+.cy-popover-anchor {
+  position: relative;
+}
+.cy-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  z-index: var(--cy-z-popover);
+  max-height: calc(100vh - 110px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--cy-line-strong);
+  border-radius: var(--cy-r-lg);
+  background: var(--cy-panel);
+  box-shadow: var(--cy-shadow-3);
+  animation: cy-pop-in 140ms var(--cy-ease);
+}
+.cy-popover--start {
+  left: 0;
+}
+.cy-popover--end {
+  right: 0;
+}
+@keyframes cy-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* ---------- connection button ---------- */
+.cy-connbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  max-width: 340px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--cy-line-strong);
+  border-radius: var(--cy-r-md);
+  background: var(--cy-panel);
+  color: var(--cy-text);
+  cursor: pointer;
+  transition: border-color var(--cy-dur-fast);
+}
+.cy-connbtn:hover {
+  border-color: var(--cy-accent-line);
+}
+.cy-connbtn.is-lost,
+.cy-connbtn.is-error {
+  border-color: color-mix(in srgb, var(--cy-danger) 60%, transparent);
+  background: var(--cy-danger-soft);
+}
+.cy-connbtn__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.15;
+}
+.cy-connbtn__phase {
+  font-size: var(--cy-fs-2xs);
+  font-weight: 900;
+  letter-spacing: var(--cy-tracking-caps);
+  text-transform: uppercase;
+  color: var(--cy-text-3);
+}
+.cy-connbtn__label {
+  max-width: 260px;
+  font-size: var(--cy-fs-sm);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cy-connmenu {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cy-connmenu__alert {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--cy-r-md);
+  background: var(--cy-danger-soft);
+  color: var(--cy-text);
+  font-size: var(--cy-fs-sm);
+}
+.cy-connmenu__alert strong {
+  color: var(--cy-danger);
+}
+.cy-connmenu__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cy-line-soft);
+}
+.cy-connmenu__current {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--cy-fs-sm);
+}
+.cy-connmenu__label {
+  color: var(--cy-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- bus health ---------- */
+.cy-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--cy-r-md);
+  background: none;
+  color: var(--cy-text-2);
+  font-size: var(--cy-fs-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cy-health:hover {
+  border-color: var(--cy-line);
+  background: var(--cy-hover);
+}
+.cy-health__load {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cy-health__bar {
+  display: inline-block;
+  width: 38px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--cy-line);
+  overflow: hidden;
+}
+.cy-health__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--cy-ok);
+  transition: width 400ms var(--cy-ease);
+}
+.cy-health.is-caution .cy-health__bar > span {
+  background: var(--cy-caution);
+}
+.cy-health.is-danger .cy-health__bar > span {
+  background: var(--cy-danger);
+}
+.cy-health__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--cy-line-strong);
+}
+.cy-health__unit {
+  color: var(--cy-text-3);
+  font-size: var(--cy-fs-xs);
+}
+.cy-health__warn {
+  color: var(--cy-warn);
+}
+.cy-health__sheet {
+  display: flex;
+  flex-direction: column;
+}
+.cy-health__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--cy-line-soft);
+  font-size: var(--cy-fs-sm);
+}
+.cy-health__section {
+  margin-top: 14px;
+  font-size: var(--cy-fs-xs);
+  font-weight: 900;
+  letter-spacing: var(--cy-tracking-caps);
+  text-transform: uppercase;
+  color: var(--cy-text-3);
+}
+
+/* ---------- E-STOP latch / armed chip ---------- */
+.cy-latch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 4px 0 12px;
+  border-radius: var(--cy-r-md);
+  background: var(--cy-danger-soft);
+  border: 1px solid var(--cy-danger);
+  animation: cy-latch-blink 1.2s ease-in-out infinite;
+}
+.cy-latch__text {
+  color: var(--cy-danger);
+  font-weight: 900;
+  font-size: var(--cy-fs-xs);
+  letter-spacing: var(--cy-tracking-caps);
+  white-space: nowrap;
+}
+@keyframes cy-latch-blink {
+  50% {
+    border-color: transparent;
+  }
+}
+.cy-armed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--cy-r-full);
+  background: var(--cy-danger);
+  color: #fff;
+  font-weight: 900;
+  font-size: var(--cy-fs-xs);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* ---------- status bar items ---------- */
+.cy-statusbar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.cy-statusbar__muted {
+  color: var(--cy-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.cy-statusbar__item {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.cy-statusbar__warn {
+  color: var(--cy-warn);
+  font-weight: 700;
+}
+.cy-statusbar__warn:hover {
+  text-decoration: underline;
+}
+.cy-rec {
+  color: var(--cy-danger);
+  font-weight: 700;
+}
+.cy-rec svg {
+  animation: cy-latch-blink 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cy-latch,
+  .cy-rec svg {
+    animation: none;
+  }
+}

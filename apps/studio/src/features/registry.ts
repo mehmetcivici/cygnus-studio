@@ -1,9 +1,11 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
-import { ChartSpline, Cpu, FolderKanban, HardDriveDownload, Layers, Network, ScrollText, SlidersHorizontal } from 'lucide-react';
+import { CarFront, ChartSpline, Cpu, FolderKanban, HardDriveDownload, Layers, Network, ScrollText, SlidersHorizontal } from 'lucide-react';
 import type { IconComponent } from '../ui';
 import type { NavParams } from '../app/nav';
+// The nav label must exist before the (lazy) screen loads.
+import { tVehicle } from './vehicle/messages';
 
-export type FeatureId = 'bus' | 'device' | 'tuner' | 'scope' | 'canmon' | 'firmware' | 'project' | 'gallery';
+export type FeatureId = 'bus' | 'vehicle' | 'device' | 'tuner' | 'scope' | 'canmon' | 'firmware' | 'project' | 'gallery';
 
 /** Props every screen receives from the shell. */
 export interface FeatureProps {
@@ -29,6 +31,7 @@ export interface FeatureDef {
  */
 export const FEATURES: readonly FeatureDef[] = [
   { id: 'bus', labelKey: 'nav.bus', icon: Network, order: 10, component: lazy(() => import('./bus').then((m) => ({ default: m.BusScreen }))) },
+  { id: 'vehicle', labelKey: tVehicle.key('nav'), icon: CarFront, order: 15, component: lazy(() => import('./vehicle').then((m) => ({ default: m.VehicleScreen }))) },
   { id: 'device', labelKey: 'nav.device', icon: Cpu, order: 20, component: lazy(() => import('./device').then((m) => ({ default: m.DeviceScreen }))) },
   { id: 'tuner', labelKey: 'nav.tuner', icon: SlidersHorizontal, order: 30, component: lazy(() => import('./tuner').then((m) => ({ default: m.TunerScreen }))) },
   { id: 'scope', labelKey: 'nav.scope', icon: ChartSpline, order: 40, component: lazy(() => import('./scope').then((m) => ({ default: m.ScopeScreen }))) },

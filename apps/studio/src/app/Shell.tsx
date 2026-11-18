@@ -8,6 +8,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
+import { SimDrawer } from './sim/SimPanel';
 import './shell.css';
 
 function Screen() {
@@ -59,6 +60,7 @@ export function Shell() {
         <Screen />
       </main>
       <StatusBar />
+      <SimDrawer />
     </div>
   );
 }
