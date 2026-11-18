@@ -150,11 +150,13 @@ Tanımsız sayfa isteği yanıtsız kalır.
 
 ### 4.5 COMMAND (SYS_REQ/5) `[cmd u8] [arg u32] [0 0 0]` → COMMAND_RSP (SYS_RSP/5) `[cmd u8] [status u8] [result u32] [0 0]`
 
-Ortak komutlar: `1 REBOOT · 2 ENTER_BOOTLOADER · 3 SAVE_PARAMS · 4 LOAD_DEFAULTS · 5 CLEAR_FAULTS · 6 SELF_TEST · 7 CLEAR_ESTOP`. `0x40+` modele özgü (katalog `actions`).
+Ortak komutlar: `1 REBOOT · 2 ENTER_BOOTLOADER · 3 SAVE_PARAMS · 4 LOAD_DEFAULTS · 5 CLEAR_FAULTS · 6 SELF_TEST · 7 CLEAR_ESTOP · 8 LOAD_SAVED`. `0x40+` modele özgü (katalog `actions`).
 `status`: `0 OK · 1 IN_PROGRESS · 2 UNSUPPORTED · 3 INVALID_ARG · 4 DENIED (ör. sürülürken) · 5 FAILED`.
 Uzun işlemler önce `IN_PROGRESS`, bitince `OK/FAILED` + `result` yollar. `SELF_TEST` sonucu: bit maskesi, 0 = hepsi geçti (bit anlamları katalogda).
 `LOAD_DEFAULTS` yalnızca RAM'i değiştirir (NUM ve ad korunur); kalıcı olması için `SAVE_PARAMS` gerekir.
-Eyleyici sürülürken (`ENABLED`) `REBOOT`, `ENTER_BOOTLOADER` ve `LOAD_DEFAULTS` `DENIED` döner.
+`LOAD_SAVED` kalıcı bellekteki parametreleri RAM'e geri yükler (kaydedilmemiş değişiklikleri atar).
+Eyleyici sürülürken (`ENABLED`) `REBOOT`, `ENTER_BOOTLOADER`, `SAVE_PARAMS`, `LOAD_DEFAULTS` ve `LOAD_SAVED` `DENIED` döner. `state = ESTOP` iken `REBOOT` ve `ENTER_BOOTLOADER` de `DENIED` döner (kilit yalnız `CLEAR_ESTOP` veya güç kesmeyle kalkar).
+`ENTER_BOOTLOADER` kasıt değeri ister: `arg = 0xB0070000 | uid16`; aksi halde `INVALID_ARG`. Uzun bir komut sürerken ESTOP gelirse komut `FAILED` ile biter.
 
 ### 4.6 FAULT_REQ (SYS_REQ/6) → FAULT_RSP (SYS_RSP/6) `[active u16] [sticky u16] [warn u16] [0 0]`
 
@@ -162,7 +164,7 @@ Ortak hata bitleri: `0 UNDERVOLT · 1 OVERVOLT · 2 OVERCURRENT · 3 OVERTEMP ·
 
 ### 4.7 ESTOP (SYS_REQ/7, yayın) `[0xE5 0x70]`
 
-Tüm eyleyiciler anında nötr olur ve `state = ESTOP`'ta kilitlenir. `COMMAND CLEAR_ESTOP` veya güç kesmeyle çıkılır. Bu yazılımsal durdurmadır; şartnamelerin istediği fiziksel acil durdurmanın yerine geçmez.
+Tüm eyleyiciler anında nötr olur ve `state = ESTOP`'ta kilitlenir. `COMMAND CLEAR_ESTOP` veya güç kesmeyle çıkılır. Host ESTOP'u 10 ms arayla 3 kez gönderir. Kart, aynı işlem turunda hem ESTOP hem CLEAR_ESTOP görürse ESTOP kazanır. Bu yazılımsal durdurmadır; şartnamelerin istediği fiziksel acil durdurmanın yerine geçmez.
 
 ## 5. Parametreler
 
@@ -202,6 +204,10 @@ CTRL/0 SET: [mode u8] [flags u8] [0 0] [value f32]
 
 `flags` ayrılmıştır; host 0 gönderir, kart yok sayar.
 
+**Nötrden başlama kuralı**: kart sürmeye yalnız bir nötr komuttan sonra geçer. Kartı nötre zorlayan her olaydan (açılış, ESTOP, CTRL zaman aşımı, hata, CONFLICT) sonra, nötr olmayan bir CTRL kabul edilmeden önce yeni bir nötr komut görülmelidir; o zamana kadar gelen nötr olmayan komutlar yok sayılır. Böylece yeniden başlayan veya kilidi kalkan kart, hâlâ akan eski hedefe kendiliğinden dönmez. Host, sürdüğü kartın `ENABLED` biti düşerse, kart `BOOT`/`ESTOP`/`FAULT` bildirirse veya numarası değişirse kontrol döngüsünü keser.
+
+Zaman aşımı bekçisini yalnız geçerli (bilinen indeks, doğru uzunluk, kabul edilen) CTRL çerçeveleri besler.
+
 **Nötr komut**: `SET` biçiminde `mode = 0, value = 0`; darbe biçiminde (servo kartı) tüm darbeler 0. Host bir kontrol döngüsünü bitirirken nötr komutu bir kez gönderir.
 
 ## 8. Yüksek hızlı akış (STREAM) — tuner grafikleri
@@ -219,6 +225,7 @@ DATA   (STREAM_RSP/0): [seq u8] [first_slot u8] [t_100us u16] [f32 × k]
 - FD kipinde tek `DATA` çerçevesi dolu yuvaların hepsini taşır (k ≤ 15); FD uzunluk yuvarlamasından gelen dolgu değerlerini host, yapılandırdığı yuva sayısına bakarak atar. Klasik kipte her yuva ayrı çerçevedir (k = 1, `first_slot` = yuva no).
 - `t_100us`: kartın 100 µs çözünürlüklü, taşan zaman damgası. `seq` her örnekleme anında 1 artar (kayıp tespiti).
 - Host `START`'ı saniyede bir tekrarlar; kart 2 s `START` görmezse akışı kendiliğinden keser.
+- Klasik kipte en çok 4 yuva kullanılır. Host akış açmadan önce tahmini hat yükünü denetler (§10) ve bütçeyi aşacaksa akışı açmaz.
 - En küçük periyot modele bağlıdır (katalog `stream.minPeriodUs`); kart desteklemediği periyodu en yakın desteklenene yuvarlar.
 
 ## 9. Firmware güncelleme (FW) — yalnızca bootloader'da
@@ -233,13 +240,20 @@ ACK   (FW_RSP/0): [status u8] [window u8] [next_offset u32] [0 0]
 status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ERROR · 6 WRONG_STATE
 ```
 
-- Kart `BEGIN` sonrası (silme sürerken `BUSY`, bitince `OK`), her `window` DATA çerçevesinde bir (varsayılan 16), sıra bozulunca (`BAD_OFFSET` + beklenen `next_offset`) ve `END` sonrası `ACK` yollar.
+- Kart `BEGIN`'e hemen `OK` döner ama hiçbir şeyi silmez. İlk 64 bayt (başlık) RAM'de toplanır ve doğrulanır; `model`/`hw_rev` uymazsa `BAD_IMAGE` döner ve kurulu uygulama **dokunulmadan** kalır. Başlık geçerliyse silme başlar (silme sürerken `BUSY`, bitince `OK` + `next_offset`).
+- `DATA` yük uzunluğu + 3, geçerli bir çerçeve uzunluğu olmalıdır (klasik: 8; FD: 8, 12, 16, 20, 24, 32, 48, 64); host son parça dışında hep tam parça gönderir.
+- Kart ayrıca her `window` DATA çerçevesinde bir (varsayılan 16), sıra bozulunca (`BAD_OFFSET` + beklenen `next_offset`) ve `END` sonrası `ACK` yollar.
 - Kart sıra bozulduğunda pencere başına bir kez `BAD_OFFSET` yollar (her bozuk çerçeveye ayrı yanıt vermez). Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Yalnızca son `DATA` parçası kısa olabilir; `size`'ı aşan dolgu baytları yok sayılır.
 - Pencere sayacı her `ACK`'tan sonra (BAD_OFFSET dahil) sıfırlanır. Son, eksik kalan pencere için ayrıca `ACK` gönderilmez; onu `END`'in `ACK`'ı kapatır.
-- Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner.
+- Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner. Aktarım sürerken gelen yeni `BEGIN` aktarımı baştan başlatır; `END` sonrası doğrulama/başlatma sürerken gelen FW_REQ `BUSY` döner.
+- Host, `END` onayı kaybolursa kartın HEARTBEAT sürümüne bakarak güncellemenin başarısını doğrular.
 - Bootloader, kalıcı `can.data_bitrate` ayarıyla çalışır (ayar alanı geçersizse klasik kip). Host parça boyunu hattın kipine göre seçer.
 - Bootloader HEARTBEAT'inin sürüm alanları kurulu imajın sürümünü taşır (geçerli imaj yoksa 0.0.0).
 - Bootloader `HEARTBEAT` (state = BOOTLOADER), `ENUM_REQ`, `ASSIGN_ID`, `IDENTIFY`, `INFO_REQ` sayfa 0–2 ve `COMMAND REBOOT`'a yanıt verir; diğer her şeye yanıtsız kalır.
+
+### 9.0 Kurtarma penceresi
+
+Bootloader her açılışta uygulamaya atlamadan önce 150 ms hattı dinler. Bu sürede `DEVTYPE = 0, NUM = 0` yayınıyla gelen `COMMAND ENTER_BOOTLOADER` (`arg = 0xB0075AFE`) görürse bootloader'da kalır. Studio'nun kurtarma kipi bu çerçeveyi 20 ms arayla yayınlar; kullanıcı aracın gücünü kapatıp açar. Böylece CRC'si geçerli ama açılmayan bir uygulama, programlayıcı gerekmeden değiştirilebilir.
 
 ### 9.1 `.cyfw` dosyası
 
@@ -252,7 +266,7 @@ status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ER
 | 6 | `model u8`, `hw_rev_min u8`, `hw_rev_max u8` |
 | 9 | `fw_major u8, fw_minor u8, fw_patch u8` |
 | 12 | `payload_size u32`, `payload_crc32 u32` |
-| 20 | `catalog_rev u16`, `reserved u16` |
+| 20 | `catalog_rev u16`, `flags u16` (bit0 = imzalı: gövdeden sonra 64 baytlık Ed25519 imzası; v1 bootloader imzayı doğrulamaz, alan ayrılmıştır) |
 | 24 | `git_hash u32`, `build_day u16`, `reserved u16` |
 | 32 | `name` 24 bayt ASCII |
 | 56 | `reserved u32` |
@@ -269,6 +283,14 @@ CRC32: IEEE 802.3 (zlib). Kart başlığı ofset 0'da doğrular; `model`/`hw_rev
 | İstek/yanıt zaman aşımı (GET/SET/INFO/COMMAND) | 100 ms, 3 deneme |
 | STREAM canlı tutma | host 1 s, kart zaman aşımı 2 s |
 | CTRL zaman aşımı | `ctrl.timeout_ms`, varsayılan 200 ms |
+
+### 10.1 Hat bütçesi
+
+Klasik 8 baytlık çerçeve 1 Mbit/s'te yaklaşık 142 µs sürer (≈ 7000 çerçeve/s tam yük). Hedef: sürekli yük %50'nin altında.
+
+- Varsayılan STATUS periyotları, 25 kartlı bir aracın klasik kipte %35'in altında kalacağı biçimde seçilir (katalog).
+- DEVTYPE kimliğin en üst bitlerinde olduğundan düşük DEVTYPE'lı kartların yoğun trafiği diğerlerini bekletebilir; bu yüzden yüksek hızlı akış aynı anda en çok birkaç kartta açılır.
+- Host bir akış açmadan önce `mevcut yük + akışın yükü`nü hesaplar; %80'i aşacaksa akışı açmaz ve nedenini bildirir.
 
 ## 11. Eski protokol: Cyncoder v3 (FRC)
 
