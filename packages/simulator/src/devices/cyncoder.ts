@@ -2,6 +2,47 @@ import { CommandStatus, MagnetStatus, Model } from '@cygnus/protocol';
 import { NodeMode, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
 import type { Shaft } from '../world';
 
+const SIGNAL_KEYS = [
+  'abs.position',
+  'position',
+  'velocity',
+  'magnet.agc',
+  'magnet.status',
+  'raw.angle',
+  'temp',
+] as const;
+const S_ABS_POSITION = 0;
+const S_POSITION = 1;
+const S_VELOCITY = 2;
+const S_MAGNET_AGC = 3;
+const S_MAGNET_STATUS = 4;
+const S_RAW_ANGLE = 5;
+const S_TEMP = 6;
+
+// Parameter slots, resolved to table indices once per board.
+const PARAM_KEYS = [
+  'enc.zero_offset_rot',
+  'enc.invert',
+  'enc.abs_range',
+  'enc.ratio',
+  'enc.vel_window_ms',
+  'enc.boot_position',
+  'mag.hysteresis',
+  'mag.slow_filter',
+  'mag.agc_strong',
+  'mag.agc_weak',
+] as const;
+const P_ENC_ZERO_OFFSET_ROT = 0;
+const P_ENC_INVERT = 1;
+const P_ENC_ABS_RANGE = 2;
+const P_ENC_RATIO = 3;
+const P_ENC_VEL_WINDOW_MS = 4;
+const P_ENC_BOOT_POSITION = 5;
+const P_MAG_HYSTERESIS = 6;
+const P_MAG_SLOW_FILTER = 7;
+const P_MAG_AGC_STRONG = 8;
+const P_MAG_AGC_WEAK = 9;
+
 export type MagnetCondition = 'ok' | 'weak' | 'strong' | 'missing';
 
 export interface CyncoderOptions extends SimNodeOptions {
@@ -29,23 +70,20 @@ export class CyncoderNode extends SimNode {
   private histHead = 0;
   private histN = 0;
   private temp = 30;
-  private readonly P: Record<string, number>;
-  private readonly S: Record<string, number>;
+  private readonly P: Int32Array;
+  private readonly S: Int32Array;
 
   constructor(o: CyncoderOptions = {}) {
     super(Model.CYNCODER, o);
     this.shaft = o.shaft ?? null;
     this.ratio = o.ratio ?? 1;
     this.mountRot = o.mountRot ?? 0;
-    const keys = ['enc.zero_offset_rot', 'enc.invert', 'enc.abs_range', 'enc.ratio', 'enc.vel_window_ms', 'enc.boot_position',
-      'mag.hysteresis', 'mag.slow_filter', 'mag.agc_strong', 'mag.agc_weak'];
-    this.P = Object.fromEntries(keys.map((k) => [k, this.params.index(k)]));
-    const sigs = ['abs.position', 'position', 'velocity', 'magnet.agc', 'magnet.status', 'raw.angle', 'temp'];
-    this.S = Object.fromEntries(sigs.map((k) => [k, this.sigIndex(k)]));
+    this.P = Int32Array.from(PARAM_KEYS, (k) => this.params.index(k));
+    this.S = Int32Array.from(SIGNAL_KEYS, (k) => this.sigIndex(k));
   }
 
-  private pk(k: string): number {
-    return this.p(this.P[k]!);
+  private pk(i: number): number {
+    return this.p(this.P[i]!);
   }
 
   /** True sensor angle in turns (continuous). */
@@ -57,11 +95,11 @@ export class CyncoderNode extends SimNode {
     if (this.magnet === 'missing') return this.rng.int(4096);
     const a = this.sensorRot();
     const frac = a - Math.floor(a);
-    const noise = NOISE_LSB[this.pk('mag.slow_filter') as 0 | 1 | 2 | 3] ?? 0.7;
+    const noise = NOISE_LSB[this.pk(P_MAG_SLOW_FILTER) as 0 | 1 | 2 | 3] ?? 0.7;
     const extra = this.magnet === 'weak' ? 2.5 : 1;
     let r = Math.round(frac * 4096 + this.rng.gauss() * noise * extra);
     r = ((r % 4096) + 4096) % 4096;
-    const hyst = this.pk('mag.hysteresis');
+    const hyst = this.pk(P_MAG_HYSTERESIS);
     if (this.lastRaw >= 0 && hyst > 0) {
       let d = r - this.lastRaw;
       if (d > 2048) d -= 4096;
@@ -78,7 +116,7 @@ export class CyncoderNode extends SimNode {
     this.raw = this.readRaw();
     this.lastRaw = this.raw;
     // "From zero" boots report 0 regardless of where the shaft sits.
-    this.bootOffset = this.pk('enc.boot_position') === 1 ? this.raw / 4096 : 0;
+    this.bootOffset = this.pk(P_ENC_BOOT_POSITION) === 1 ? this.raw / 4096 : 0;
   }
 
   /** Multi-turn position before invert / ratio / zero, turns. */
@@ -93,17 +131,17 @@ export class CyncoderNode extends SimNode {
     else if (d < -2048) this.turns++;
     this.lastRaw = r;
     this.raw = r;
-    const dir = this.pk('enc.invert') ? -1 : 1;
-    const zero = this.pk('enc.zero_offset_rot');
-    const ratio = this.pk('enc.ratio') || 1;
+    const dir = this.pk(P_ENC_INVERT) ? -1 : 1;
+    const zero = this.pk(P_ENC_ZERO_OFFSET_ROT);
+    const ratio = this.pk(P_ENC_RATIO) || 1;
     let abs = dir * (r / 4096 - zero);
     abs -= Math.floor(abs);
-    if (this.pk('enc.abs_range') === 1 && abs >= 0.5) abs -= 1;
+    if (this.pk(P_ENC_ABS_RANGE) === 1 && abs >= 0.5) abs -= 1;
     const pos = (dir * (this.unwrapped() - zero - this.bootOffset)) / ratio;
     this.hist[this.histHead] = pos;
     this.histHead = (this.histHead + 1) & 127;
     if (this.histN < 128) this.histN++;
-    const win = Math.max(1, Math.min(100, this.pk('enc.vel_window_ms')));
+    const win = Math.max(1, Math.min(100, this.pk(P_ENC_VEL_WINDOW_MS)));
     let vel = 0;
     if (this.histN > win) {
       const old = this.hist[(this.histHead - 1 - win + 256) & 127]!;
@@ -112,14 +150,14 @@ export class CyncoderNode extends SimNode {
     const agc = this.agc();
     this.temp += (32 - this.temp) * 0.0001;
     const s = this.sig;
-    s[this.S['abs.position']!] = abs;
-    s[this.S['position']!] = pos;
-    s[this.S['velocity']!] = vel;
-    s[this.S['raw.angle']!] = r;
-    s[this.S['magnet.agc']!] = agc;
+    s[this.S[S_ABS_POSITION]!] = abs;
+    s[this.S[S_POSITION]!] = pos;
+    s[this.S[S_VELOCITY]!] = vel;
+    s[this.S[S_RAW_ANGLE]!] = r;
+    s[this.S[S_MAGNET_AGC]!] = agc;
     const st = this.status(agc);
-    s[this.S['magnet.status']!] = st;
-    s[this.S['temp']!] = this.temp;
+    s[this.S[S_MAGNET_STATUS]!] = st;
+    s[this.S[S_TEMP]!] = this.temp;
     this.setFault(F.MAGNET_MISSING, st === MagnetStatus.MISSING);
     this.setWarn(F.MAGNET_WEAK, st === MagnetStatus.WEAK);
     this.setWarn(F.MAGNET_STRONG, st === MagnetStatus.STRONG);
@@ -140,8 +178,8 @@ export class CyncoderNode extends SimNode {
 
   private status(agc: number): number {
     if (this.magnet === 'missing') return MagnetStatus.MISSING;
-    if (agc >= this.pk('mag.agc_weak')) return MagnetStatus.WEAK;
-    if (agc <= this.pk('mag.agc_strong')) return MagnetStatus.STRONG;
+    if (agc >= this.pk(P_MAG_AGC_WEAK)) return MagnetStatus.WEAK;
+    if (agc <= this.pk(P_MAG_AGC_STRONG)) return MagnetStatus.STRONG;
     return MagnetStatus.OK;
   }
 

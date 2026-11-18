@@ -12,8 +12,8 @@ class Fuse {
   update(a: number, dtS: number): void {
     if (this.blown) return;
     const x = (a * a) / (this.ratingA * this.ratingA);
-    // Above rating heat builds (2× rating ≈ 0.3 s, 1.3× ≈ 1.5 s); below it cools off.
-    this.heat = Math.max(0, this.heat + (x > 1 ? x - 1 : -0.5) * dtS);
+    // Above rating heat builds (1.5× ≈ 3 s, 2× ≈ 1.3 s, 3× ≈ 0.5 s); below it cools off.
+    this.heat = Math.max(0, this.heat + (x > 1 ? (x - 1) * 0.25 : -0.5) * dtS);
     if (this.heat > 1) this.blown = true;
   }
 

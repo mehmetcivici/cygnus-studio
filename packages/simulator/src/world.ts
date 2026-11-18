@@ -416,6 +416,7 @@ export type BodyConfig =
   | { kind: 'swerve'; wheelRadiusM: number; modules: Array<{ x: number; y: number; drive: Shaft; steer: Shaft }> }
   | { kind: 'mecanum'; wheelRadiusM: number; lx: number; ly: number; fl: Shaft; fr: Shaft; rl: Shaft; rr: Shaft }
   | { kind: 'thrust'; medium: 'air' | 'water' | 'surface'; massKg: number; thrusters: Thruster[] }
+  | { kind: 'ackermann'; drive: Shaft[]; steer: Shaft; wheelRadiusM: number; wheelbaseM: number; maxSteerDeg: number }
   | { kind: 'turret'; pan: Shaft; tilt: Shaft | null };
 
 const D2R = Math.PI / 180;
@@ -477,6 +478,12 @@ export class Body {
         modelYawRate = ((r * (-c.fl.omega + c.fr.omega - c.rl.omega + c.rr.omega)) / (4 * (c.lx + c.ly))) * R2D;
         break;
       }
+      case 'ackermann': {
+        const v = avgOmega(c.drive) * c.wheelRadiusM;
+        const d = clamp(c.steer.rot * 360, -c.maxSteerDeg, c.maxSteerDeg) * D2R;
+        modelYawRate = ((v * Math.tan(d)) / c.wheelbaseM) * R2D;
+        break;
+      }
       case 'thrust':
         modelYawRate = this.thrustStep(c, dtS);
         break;
@@ -514,7 +521,8 @@ export class Body {
     let lift = 0;
     for (const t of c.thrusters) {
       const f = t.shaft.thrust;
-      tz -= t.spin * t.shaft.propTorque;
+      // Reaction of the propeller drag turns the body the other way.
+      tz -= t.shaft.propTorque;
       if (t.vertical) {
         lift += f;
         tPitch += t.y * f;
@@ -666,6 +674,8 @@ export class World {
         s.disturbanceUntil = -1;
       }
       if (s.handActive && s.handUntil >= 0 && nowMs >= s.handUntil) {
+        // A timed hand move ends with the hand stopping the shaft, then letting go.
+        s.omega = 0;
         s.handActive = false;
         s.handUntil = -1;
       }

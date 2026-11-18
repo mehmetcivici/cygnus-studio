@@ -46,6 +46,10 @@ export class Simulation implements SimContext {
   readonly bus: SimBus;
   readonly world: World;
   label: Text;
+  /** Scenario this simulation was built from, if any. */
+  scenarioId = '';
+  /** Vehicle scenarios: template slot id → where it lives in the simulation. */
+  readonly slotPlacements: Record<string, { nodeId: string; channel?: number; shaftId?: string }> = {};
   /** Added to frame timestamps given to the host (RealtimeRunner aligns it with the wall clock). */
   hostTimeOffset = 0;
   private readonly nodeList: SimNode[] = [];

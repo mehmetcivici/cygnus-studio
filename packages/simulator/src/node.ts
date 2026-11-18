@@ -46,10 +46,11 @@ import {
   idIndex,
   idMfr,
   idNum,
-  readF32,
   readU16,
   readU24,
   readU32,
+  readU48,
+  EnumFlag,
   readParamValue,
   statusPeriodPid,
   uid96ToInfoPages,
@@ -194,6 +195,8 @@ export abstract class SimNode implements BusEndpoint {
   num: number;
   readonly name = new Uint8Array(NAME_BYTES);
   conflict = false;
+  /** Number came from an ASSIGN_ID during this power cycle. */
+  private hostAssigned = false;
   private bootDoneAt = 0;
   private bootIntoLoader = false;
   private identifyUntil = -1;
@@ -488,6 +491,7 @@ export abstract class SimNode implements BusEndpoint {
   private finishBoot(): void {
     this.num = this.flashNum;
     this.conflict = false;
+    this.hostAssigned = false;
     this.name.set(this.flashName);
     this.faultActive = 0;
     this.faultWarn = 0;
@@ -564,6 +568,7 @@ export abstract class SimNode implements BusEndpoint {
     const cls = idClass(id);
     if ((cls & 1) === 1) {
       if (cls === Cls.SYS_RSP && idIndex(id) === SysRsp.HEARTBEAT) this.checkConflict(f);
+      else if (cls === Cls.ENUM_RSP) this.checkEnumConflict(f);
       if (this.listensToPeers && this.mode === NodeMode.APP) this.onPeerFrame(f);
       return;
     }
@@ -597,11 +602,28 @@ export abstract class SimNode implements BusEndpoint {
 
   private checkConflict(f: BusFrame): void {
     if (!this.assigned || idDevType(f.id) !== this.def.devType || idNum(f.id) !== this.num || f.len < 5) return;
-    if (readU16(f.data, 3) !== this.uid16) {
-      this.conflict = true;
-      this.streamOn = false;
-      this.neutral();
-    }
+    if (readU16(f.data, 3) !== this.uid16) this.enterConflict();
+  }
+
+  /** PROTOCOL §3.4: an ENUM_RSP carrying our DEVTYPE+NUM from another uid48 is a conflict too. */
+  private checkEnumConflict(f: BusFrame): void {
+    if (!this.assigned || idDevType(f.id) !== this.def.devType || f.len < 8) return;
+    const flags = f.data[6] ?? 0;
+    if ((flags & 0x3f) !== this.num || readU48(f.data, 0) === this.uid48) return;
+    // Protocol question: a board the host just (re)assigned ignores CONFLICT-flagged replies of
+    // boards still waiting for their own ASSIGN_ID, or re-assigning the same number could never stick.
+    if (this.hostAssigned && (flags & EnumFlag.CONFLICT) !== 0) return;
+    this.enterConflict();
+  }
+
+  private enterConflict(): void {
+    this.conflict = true;
+    this.hostAssigned = false;
+    this.streamOn = false;
+    this.neutral();
+    // Announce it so every board on this number falls silent, whatever the boot order.
+    this.enumAt = this.now + this.rng.int(21);
+    this.enumRetried = false;
   }
 
   private onSysReq(index: number, d: Uint8Array, len: number, open: boolean): void {
@@ -621,6 +643,7 @@ export abstract class SimNode implements BusEndpoint {
         this.num = m.newNum;
         if (m.persist) this.flashNum = m.newNum;
         this.conflict = false;
+        this.hostAssigned = true;
         this.hbNext = this.now + this.hbPhase;
         this.sendEnumRsp();
         return;
@@ -634,13 +657,15 @@ export abstract class SimNode implements BusEndpoint {
         return;
       }
       case SysReq.ESTOP:
-        if (len >= 2 && d[0] === 0xe5 && d[1] === 0x70) this.latchEstop();
+        if (this.mode === NodeMode.APP && len >= 2 && d[0] === 0xe5 && d[1] === 0x70) this.latchEstop();
         return;
     }
     if (!open) return;
+    const loader = this.mode === NodeMode.BOOTLOADER;
     switch (index) {
       case SysReq.INFO_REQ:
-        if (len >= 1) this.sendInfo(d[0] ?? 0);
+        // The bootloader only knows the device and UID pages (PROTOCOL §9).
+        if (len >= 1 && (!loader || (d[0] ?? 0) <= InfoPage.UID_HI)) this.sendInfo(d[0] ?? 0);
         return;
       case SysReq.NAME_SET: {
         if (len < 8 || this.mode !== NodeMode.APP) return;
@@ -656,6 +681,7 @@ export abstract class SimNode implements BusEndpoint {
         return;
       }
       case SysReq.FAULT_REQ:
+        if (loader) return;
         this.send(encodeFaultRsp(this.addr, { active: this.faultActive, sticky: this.faultSticky, warn: this.faultWarn }));
         return;
     }
@@ -755,11 +781,11 @@ export abstract class SimNode implements BusEndpoint {
   private onCommand(cmd: number, arg: number): void {
     const enabled = this.isEnabled();
     if (this.mode === NodeMode.BOOTLOADER) {
+      // Only REBOOT is answered in the bootloader; everything else stays silent (PROTOCOL §9).
       if (cmd === Command.REBOOT) {
         this.respond(cmd, CommandStatus.OK, 0);
         this.reboot(false);
-      } else if (cmd === Command.ENTER_BOOTLOADER) this.respond(cmd, CommandStatus.OK, 0);
-      else this.respond(cmd, CommandStatus.UNSUPPORTED, 0);
+      }
       return;
     }
     switch (cmd) {
@@ -959,6 +985,7 @@ export abstract class SimNode implements BusEndpoint {
   // ---- FW update -------------------------------------------------------------------------
 
   private fwAck(status: number, next = this.fwNext): void {
+    this.fwSinceAck = 0;
     this.send(encodeFwAck(this.addr, { status, window: FW_WINDOW_DEFAULT, nextOffset: next }));
   }
 
@@ -989,6 +1016,7 @@ export abstract class SimNode implements BusEndpoint {
         if (off !== this.fwNext) {
           if (!this.fwBadOffsetSent) {
             this.fwBadOffsetSent = true;
+            this.fwSinceAck = 0;
             this.fwAck(FwStatus.BAD_OFFSET);
           }
           return;
@@ -1003,7 +1031,8 @@ export abstract class SimNode implements BusEndpoint {
           this.fwPhase = 'idle';
           return this.fwAck(FwStatus.FLASH_ERROR);
         }
-        if (this.fwSinceAck >= FW_WINDOW_DEFAULT || this.fwNext >= this.fwSize) {
+        // A short final window is not acknowledged on its own: END's ACK closes it.
+        if (this.fwSinceAck >= FW_WINDOW_DEFAULT) {
           this.fwSinceAck = 0;
           this.fwAck(FwStatus.OK);
         }
@@ -1127,11 +1156,6 @@ export abstract class SimNode implements BusEndpoint {
       injections: this.allInjections(),
       activeInjections: this.activeInjections(),
     };
-  }
-
-  /** Reads an f32 from a peer STATUS payload (helper for listening boards). */
-  protected static peerF32(f: BusFrame, offset: number): number {
-    return readF32(f.data, offset);
   }
 }
 

@@ -3,6 +3,133 @@ import type { BusFrame } from '../bus';
 import { NodeMode, PEER_TIMEOUT_MS, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
 import { SUBSTEPS, clamp, type Motor, type MotorDriver } from '../world';
 
+const SIGNAL_KEYS = [
+  'bus.voltage',
+  'bus.current',
+  'phase.current',
+  'duty',
+  'velocity',
+  'position',
+  'setpoint',
+  'error',
+  'loop.output',
+  'temp.fet',
+  'temp.motor',
+  'pwm.pulse',
+  'energy',
+  'ctrl.mode',
+] as const;
+const S_BUS_VOLTAGE = 0;
+const S_BUS_CURRENT = 1;
+const S_PHASE_CURRENT = 2;
+const S_DUTY = 3;
+const S_VELOCITY = 4;
+const S_POSITION = 5;
+const S_SETPOINT = 6;
+const S_ERROR = 7;
+const S_LOOP_OUTPUT = 8;
+const S_TEMP_FET = 9;
+const S_TEMP_MOTOR = 10;
+const S_PWM_PULSE = 11;
+const S_ENERGY = 12;
+const S_CTRL_MODE = 13;
+
+// Parameter slots, resolved to table indices once per board.
+const PARAM_KEYS = [
+  'motor.pole_pairs',
+  'motor.invert',
+  'motor.gear_ratio',
+  'motor.idle_mode',
+  'motor.ramp_s',
+  'motor.pwm_khz',
+  'motor.startup_duty',
+  'limits.supply_current_a',
+  'limits.phase_current_a',
+  'limits.undervoltage_v',
+  'limits.overvoltage_v',
+  'limits.temp_c',
+  'limits.motor_temp_c',
+  'limits.duty_max',
+  'limits.fwd_soft_enable',
+  'limits.fwd_soft_rot',
+  'limits.rev_soft_enable',
+  'limits.rev_soft_rot',
+  'current.kp',
+  'current.ki',
+  'vel.kp',
+  'vel.ki',
+  'vel.kd',
+  'vel.ks',
+  'vel.kv',
+  'vel.ka',
+  'vel.i_max',
+  'vel.out_max',
+  'vel.filter_hz',
+  'pos.kp',
+  'pos.ki',
+  'pos.kd',
+  'pos.i_max',
+  'pos.cruise_rpm',
+  'pos.accel_rpm_s',
+  'pos.tolerance_rot',
+  'fb.source',
+  'fb.remote_num',
+  'fb.sensor_invert',
+  'fb.remote_ratio',
+  'pwm.enable',
+  'pwm.min_us',
+  'pwm.mid_us',
+  'pwm.max_us',
+  'pwm.deadband_us',
+  'pwm.bidirectional',
+] as const;
+const P_MOTOR_POLE_PAIRS = 0;
+const P_MOTOR_INVERT = 1;
+const P_MOTOR_GEAR_RATIO = 2;
+const P_MOTOR_IDLE_MODE = 3;
+const P_MOTOR_RAMP_S = 4;
+const P_MOTOR_PWM_KHZ = 5;
+const P_MOTOR_STARTUP_DUTY = 6;
+const P_LIMITS_SUPPLY_CURRENT_A = 7;
+const P_LIMITS_PHASE_CURRENT_A = 8;
+const P_LIMITS_UNDERVOLTAGE_V = 9;
+const P_LIMITS_OVERVOLTAGE_V = 10;
+const P_LIMITS_TEMP_C = 11;
+const P_LIMITS_MOTOR_TEMP_C = 12;
+const P_LIMITS_DUTY_MAX = 13;
+const P_LIMITS_FWD_SOFT_ENABLE = 14;
+const P_LIMITS_FWD_SOFT_ROT = 15;
+const P_LIMITS_REV_SOFT_ENABLE = 16;
+const P_LIMITS_REV_SOFT_ROT = 17;
+const P_CURRENT_KP = 18;
+const P_CURRENT_KI = 19;
+const P_VEL_KP = 20;
+const P_VEL_KI = 21;
+const P_VEL_KD = 22;
+const P_VEL_KS = 23;
+const P_VEL_KV = 24;
+const P_VEL_KA = 25;
+const P_VEL_I_MAX = 26;
+const P_VEL_OUT_MAX = 27;
+const P_VEL_FILTER_HZ = 28;
+const P_POS_KP = 29;
+const P_POS_KI = 30;
+const P_POS_KD = 31;
+const P_POS_I_MAX = 32;
+const P_POS_CRUISE_RPM = 33;
+const P_POS_ACCEL_RPM_S = 34;
+const P_POS_TOLERANCE_ROT = 35;
+const P_FB_SOURCE = 36;
+const P_FB_REMOTE_NUM = 37;
+const P_FB_SENSOR_INVERT = 38;
+const P_FB_REMOTE_RATIO = 39;
+const P_PWM_ENABLE = 40;
+const P_PWM_MIN_US = 41;
+const P_PWM_MID_US = 42;
+const P_PWM_MAX_US = 43;
+const P_PWM_DEADBAND_US = 44;
+const P_PWM_BIDIRECTIONAL = 45;
+
 const F = { MOTOR_DISCONNECTED: 10, SENSOR_LOST: 11, LOCKED_ROTOR: 12, REMOTE_SENSOR_LOST: 13 } as const;
 const Drive = { COAST: 0, VOLTAGE: 1, CURRENT: 2, BRAKE: 3 } as const;
 const Act = { NONE: 0, DETECT: 0x40, MEASURE: 0x41, CAL_PWM: 0x42 } as const;
@@ -58,8 +185,6 @@ export class EscNode extends SimNode implements MotorDriver {
   private profP = 0;
   private profV = 0;
   private profA = 0;
-  private holding = false;
-  private heldOut = 0;
   private loopOut = 0;
   private reference = 0;
   private loopErr = 0;
@@ -100,9 +225,9 @@ export class EscNode extends SimNode implements MotorDriver {
   private actD = 0;
 
   // parameter indices
-  private readonly P: Record<string, number>;
+  private readonly P: Int32Array;
   // signal indices
-  private readonly S: Record<string, number>;
+  private readonly S: Int32Array;
 
   constructor(model: typeof Model.ESC_20A | typeof Model.ESC_80A, o: EscOptions = {}) {
     super(model, o);
@@ -110,24 +235,12 @@ export class EscNode extends SimNode implements MotorDriver {
     if (this.motor) this.motor.driver = this;
     this.stage = STAGES[model]!;
     this.streamGranularity = 5;
-    const keys = [
-      'motor.pole_pairs', 'motor.invert', 'motor.gear_ratio', 'motor.idle_mode', 'motor.ramp_s', 'motor.pwm_khz',
-      'motor.startup_duty', 'motor.resistance_ohm', 'motor.kv_rpm_per_v', 'motor.inductance_uh',
-      'limits.supply_current_a', 'limits.phase_current_a', 'limits.undervoltage_v', 'limits.overvoltage_v', 'limits.temp_c',
-      'limits.motor_temp_c', 'limits.duty_max', 'limits.fwd_soft_enable', 'limits.fwd_soft_rot', 'limits.rev_soft_enable',
-      'limits.rev_soft_rot', 'current.kp', 'current.ki', 'vel.kp', 'vel.ki', 'vel.kd', 'vel.ks', 'vel.kv', 'vel.ka', 'vel.i_max',
-      'vel.out_max', 'vel.filter_hz', 'pos.kp', 'pos.ki', 'pos.kd', 'pos.i_max', 'pos.cruise_rpm', 'pos.accel_rpm_s',
-      'pos.tolerance_rot', 'fb.source', 'fb.remote_num', 'fb.sensor_invert', 'fb.remote_ratio', 'pwm.enable', 'pwm.min_us',
-      'pwm.mid_us', 'pwm.max_us', 'pwm.deadband_us', 'pwm.bidirectional',
-    ];
-    this.P = Object.fromEntries(keys.map((k) => [k, this.params.index(k)]));
-    const sigs = ['bus.voltage', 'bus.current', 'phase.current', 'duty', 'velocity', 'position', 'setpoint', 'error', 'loop.output',
-      'temp.fet', 'temp.motor', 'pwm.pulse', 'energy', 'ctrl.mode'];
-    this.S = Object.fromEntries(sigs.map((k) => [k, this.sigIndex(k)]));
+    this.P = Int32Array.from(PARAM_KEYS, (k) => this.params.index(k));
+    this.S = Int32Array.from(SIGNAL_KEYS, (k) => this.sigIndex(k));
   }
 
-  private pk(key: string): number {
-    return this.p(this.P[key]!);
+  private pk(i: number): number {
+    return this.p(this.P[i]!);
   }
 
   /** Attaches (or replaces) the motor on the phases. */
@@ -169,7 +282,6 @@ export class EscNode extends SimNode implements MotorDriver {
     this.prevVelErr = 0;
     this.prevVelSp = 0;
     this.posInt = 0;
-    this.holding = false;
     this.profP = this.pos;
     this.profV = this.vel / 60;
     this.profA = 0;
@@ -191,7 +303,7 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private pwmDriving(): boolean {
-    return this.pk('pwm.enable') !== 0 && this.pwmIn.pulseUs >= 800 && !this.commandable;
+    return this.pk(P_PWM_ENABLE) !== 0 && this.pwmIn.pulseUs >= 800 && !this.commandable;
   }
 
   override supplyCurrent(): number {
@@ -218,7 +330,7 @@ export class EscNode extends SimNode implements MotorDriver {
   protected override onPeerFrame(f: BusFrame): void {
     const id = f.id;
     if (idMfr(id) !== MFR || idClass(id) !== Cls.STATUS || idIndex(id) !== 0) return;
-    if (idDevType(id) !== DevType.ENCODER || idNum(id) !== this.pk('fb.remote_num') || f.len < 8) return;
+    if (idDevType(id) !== DevType.ENCODER || idNum(id) !== this.pk(P_FB_REMOTE_NUM) || f.len < 8) return;
     this.remotePos = readF32(f.data, 0);
     this.remoteVel = readF32(f.data, 4);
     this.remoteAt = this.now;
@@ -234,12 +346,12 @@ export class EscNode extends SimNode implements MotorDriver {
     }
     this.trackHall(m, sub);
     const vbus = this.supplyV;
-    const sign = this.pk('motor.invert') ? -1 : 1;
+    const sign = this.pk(P_MOTOR_INVERT) ? -1 : 1;
     const r = m.spec.resistance;
     const e = m.ke * m.omega;
     // Current available: phase limit, supply limit mapped through the duty, thermal derate.
-    const phaseLim = this.pk('limits.phase_current_a') * this.derate;
-    const dutyMax = this.pk('limits.duty_max');
+    const phaseLim = this.pk(P_LIMITS_PHASE_CURRENT_A) * this.derate;
+    const dutyMax = this.pk(P_LIMITS_DUTY_MAX);
     let v = 0;
     switch (this.driveKind) {
       case Drive.COAST:
@@ -250,12 +362,19 @@ export class EscNode extends SimNode implements MotorDriver {
       case Drive.BRAKE:
         v = 0;
         break;
-      case Drive.VOLTAGE:
-        v = sign * clamp(this.vCmd, -vbus * dutyMax, vbus * dutyMax);
+      case Drive.VOLTAGE: {
+        let cmd = clamp(this.vCmd, -vbus * dutyMax, vbus * dutyMax);
+        // Sensorless start: below measurable back-EMF the drive kicks with the startup duty.
+        if (this.pk(P_FB_SOURCE) === FbSource.SENSORLESS && Math.abs(m.rpm) < SENSORLESS_MIN_RPM && Math.abs(cmd) > 0.01 * vbus) {
+          const kick = this.pk(P_MOTOR_STARTUP_DUTY) * vbus;
+          if (Math.abs(cmd) < kick) cmd = Math.sign(cmd) * kick;
+        }
+        v = sign * cmd;
         break;
+      }
       case Drive.CURRENT: {
-        const kp = this.pk('current.kp');
-        const ki = this.pk('current.ki');
+        const kp = this.pk(P_CURRENT_KP);
+        const ki = this.pk(P_CURRENT_KI);
         const it = clamp(this.iTarget, -phaseLim, phaseLim);
         const err = it - sign * m.current;
         const vmax = vbus * dutyMax;
@@ -268,7 +387,7 @@ export class EscNode extends SimNode implements MotorDriver {
       }
     }
     const duty = vbus > 0.5 ? Math.abs(v) / vbus : 1;
-    const supLim = this.pk('limits.supply_current_a');
+    const supLim = this.pk(P_LIMITS_SUPPLY_CURRENT_A);
     const ilim = Math.min(phaseLim, supLim / Math.max(duty, 0.05), this.stage.hardMaxA);
     v = clamp(v, e - r * ilim, e + r * ilim);
     v = clamp(v, -vbus, vbus);
@@ -285,14 +404,14 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private updateFastSignals(m: Motor | null, vbus: number): void {
-    const sign = this.pk('motor.invert') ? -1 : 1;
+    const sign = this.pk(P_MOTOR_INVERT) ? -1 : 1;
     const i = m ? m.current : 0;
     const v = m && !m.coast ? m.voltage : 0;
     this.supplyA = (vbus > 0.5 ? (i * v) / vbus : 0) + 0.06;
     const s = this.sig;
-    s[this.S['phase.current']!] = sign * i + this.rng.gauss() * 0.04;
-    s[this.S['bus.current']!] = this.supplyA + this.rng.gauss() * 0.02;
-    s[this.S['duty']!] = vbus > 0.5 ? (sign * v) / vbus : 0;
+    s[this.S[S_PHASE_CURRENT]!] = sign * i + this.rng.gauss() * 0.04;
+    s[this.S[S_BUS_CURRENT]!] = this.supplyA + this.rng.gauss() * 0.02;
+    s[this.S[S_DUTY]!] = vbus > 0.5 ? (sign * v) / vbus : 0;
   }
 
   /** Hall edge timing at substep resolution, interpolated to the crossing instant. */
@@ -339,30 +458,30 @@ export class EscNode extends SimNode implements MotorDriver {
     this.energyWh += (vbus * this.supplyA) / 3.6e6;
     const s = this.sig;
     const S = this.S;
-    s[S['bus.voltage']!] = vbus + this.rng.gauss() * 0.015;
-    s[S['velocity']!] = this.velF;
-    s[S['position']!] = this.pos;
-    s[S['setpoint']!] = this.reference;
-    s[S['error']!] = this.loopErr;
-    s[S['loop.output']!] = this.loopOut;
-    s[S['temp.fet']!] = this.fetTemp + this.rng.gauss() * 0.1;
-    s[S['temp.motor']!] = m ? m.tempC : this.ctx.world.ambientC;
-    s[S['pwm.pulse']!] = this.pwmIn.pulseUs;
-    s[S['energy']!] = this.energyWh;
-    s[S['ctrl.mode']!] = this.pwmDriving() ? EscMode.DUTY : this.ctrlMode;
+    s[S[S_BUS_VOLTAGE]!] = vbus + this.rng.gauss() * 0.015;
+    s[S[S_VELOCITY]!] = this.velF;
+    s[S[S_POSITION]!] = this.pos;
+    s[S[S_SETPOINT]!] = this.reference;
+    s[S[S_ERROR]!] = this.loopErr;
+    s[S[S_LOOP_OUTPUT]!] = this.loopOut;
+    s[S[S_TEMP_FET]!] = this.fetTemp + this.rng.gauss() * 0.1;
+    s[S[S_TEMP_MOTOR]!] = m ? m.tempC : this.ctx.world.ambientC;
+    s[S[S_PWM_PULSE]!] = this.pwmIn.pulseUs;
+    s[S[S_ENERGY]!] = this.energyWh;
+    s[S[S_CTRL_MODE]!] = this.pwmDriving() ? EscMode.DUTY : this.ctrlMode;
     this.actionTick(m, vbus);
   }
 
   private measure(m: Motor | null): void {
-    const src = this.pk('fb.source');
-    const pp = Math.max(1, this.pk('motor.pole_pairs'));
-    const gear = this.pk('motor.gear_ratio') || 1;
-    const inv = this.pk('motor.invert') ? -1 : 1;
-    const sInv = this.pk('fb.sensor_invert') ? -1 : 1;
+    const src = this.pk(P_FB_SOURCE);
+    const pp = Math.max(1, this.pk(P_MOTOR_POLE_PAIRS));
+    const gear = this.pk(P_MOTOR_GEAR_RATIO) || 1;
+    const inv = this.pk(P_MOTOR_INVERT) ? -1 : 1;
+    const sInv = this.pk(P_FB_SENSOR_INVERT) ? -1 : 1;
     let motorRot = 0;
     let motorRpm = 0;
     if (src === FbSource.REMOTE) {
-      const ratio = this.pk('fb.remote_ratio') || 1;
+      const ratio = this.pk(P_FB_REMOTE_RATIO) || 1;
       // Remote position is mechanism-side already: only the ratio and sensor direction apply.
       this.pos = (sInv * this.remotePos) / ratio - this.posOffset;
       this.vel = (sInv * this.remoteVel) / ratio;
@@ -381,7 +500,7 @@ export class EscNode extends SimNode implements MotorDriver {
     } else {
       this.vel = 0;
     }
-    const fc = this.pk('vel.filter_hz');
+    const fc = this.pk(P_VEL_FILTER_HZ);
     const alpha = 1 - Math.exp(-2 * Math.PI * fc * 0.001);
     this.velF += (this.vel - this.velF) * alpha;
   }
@@ -406,17 +525,17 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private protect(m: Motor | null, vbus: number): void {
-    const uv = this.pk('limits.undervoltage_v');
-    const ov = this.pk('limits.overvoltage_v');
+    const uv = this.pk(P_LIMITS_UNDERVOLTAGE_V);
+    const ov = this.pk(P_LIMITS_OVERVOLTAGE_V);
     if (vbus < uv) this.uvLatched = true;
     else if (vbus > uv + 0.3) this.uvLatched = false;
     if (vbus > ov) this.ovLatched = true;
     else if (vbus < ov - 0.3) this.ovLatched = false;
     this.setFault(FaultBit.UNDERVOLT, this.uvLatched);
     this.setFault(FaultBit.OVERVOLT, this.ovLatched);
-    const tLim = this.pk('limits.temp_c');
+    const tLim = this.pk(P_LIMITS_TEMP_C);
     this.derate = clamp((tLim - this.fetTemp) / 15, 0, 1);
-    const mtLim = this.pk('limits.motor_temp_c');
+    const mtLim = this.pk(P_LIMITS_MOTOR_TEMP_C);
     const motorHot = mtLim > 0 && m !== null && m.tempC > mtLim;
     this.setFault(FaultBit.OVERTEMP, this.fetTemp >= tLim || motorHot);
     if (m) {
@@ -424,7 +543,7 @@ export class EscNode extends SimNode implements MotorDriver {
       if (iAbs > this.stage.hardMaxA) this.setFault(FaultBit.OVERCURRENT, true);
       else if (this.hasFault(FaultBit.OVERCURRENT) && iAbs < this.stage.hardMaxA * 0.8) this.setFault(FaultBit.OVERCURRENT, false);
       const driving = this.driveKind === Drive.VOLTAGE || this.driveKind === Drive.CURRENT;
-      if (driving && iAbs > 0.6 * this.pk('limits.phase_current_a') && Math.abs(m.rpm) < 20) this.lockedMs++;
+      if (driving && iAbs > 0.6 * this.pk(P_LIMITS_PHASE_CURRENT_A) && Math.abs(m.rpm) < 20) this.lockedMs++;
       else this.lockedMs = 0;
       if (this.lockedMs > 1500) this.locked = true;
       const pushing = driving && (Math.abs(this.vCmd) > 1 || Math.abs(this.iTarget) > 1);
@@ -436,7 +555,7 @@ export class EscNode extends SimNode implements MotorDriver {
     }
     this.setFault(F.LOCKED_ROTOR, this.locked);
     this.setFault(F.MOTOR_DISCONNECTED, this.disconnected);
-    const src = this.pk('fb.source');
+    const src = this.pk(P_FB_SOURCE);
     this.setFault(F.SENSOR_LOST, src === FbSource.HALL && this.hallLost);
     const remoteLost = src === FbSource.REMOTE && this.now - this.remoteAt > PEER_TIMEOUT_MS;
     this.setFault(F.REMOTE_SENSOR_LOST, remoteLost);
@@ -463,7 +582,7 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private idle(): void {
-    this.driveKind = this.pk('motor.idle_mode') === 0 ? Drive.BRAKE : Drive.COAST;
+    this.driveKind = this.pk(P_MOTOR_IDLE_MODE) === 0 ? Drive.BRAKE : Drive.COAST;
     this.vCmd = 0;
     this.iTarget = 0;
     this.loopOut = 0;
@@ -504,9 +623,9 @@ export class EscNode extends SimNode implements MotorDriver {
         this.loopErr = 0;
         return;
       case EscMode.DUTY: {
-        const dmax = this.pk('limits.duty_max');
+        const dmax = this.pk(P_LIMITS_DUTY_MAX);
         const target = clamp(sp, -dmax, dmax);
-        const ramp = this.pk('motor.ramp_s');
+        const ramp = this.pk(P_MOTOR_RAMP_S);
         if (ramp > 0) {
           const step = dt / ramp;
           this.dutyRamped += clamp(target - this.dutyRamped, -step, step);
@@ -522,16 +641,16 @@ export class EscNode extends SimNode implements MotorDriver {
         it = this.softLimit(it);
         this.iTarget = it;
         this.reference = sp;
-        this.loopErr = sp - (this.sig[this.S['phase.current']!] ?? 0);
-        this.loopOut = this.motor ? this.motor.voltage * (this.pk('motor.invert') ? -1 : 1) : 0;
+        this.loopErr = sp - (this.sig[this.S[S_PHASE_CURRENT]!] ?? 0);
+        this.loopOut = this.motor ? this.motor.voltage * (this.pk(P_MOTOR_INVERT) ? -1 : 1) : 0;
         return;
       }
       case EscMode.VELOCITY: {
         if (remoteLost) return this.idle();
-        const kp = this.pk('vel.kp');
-        const ki = this.pk('vel.ki');
-        const kd = this.pk('vel.kd');
-        const iMax = this.pk('vel.i_max');
+        const kp = this.pk(P_VEL_KP);
+        const ki = this.pk(P_VEL_KI);
+        const kd = this.pk(P_VEL_KD);
+        const iMax = this.pk(P_VEL_I_MAX);
         const err = sp - this.velF;
         this.velInt = clamp(this.velInt + ki * err * dt, -iMax, iMax);
         const d = (kd * (err - this.prevVelErr)) / dt;
@@ -539,7 +658,7 @@ export class EscNode extends SimNode implements MotorDriver {
         const acc = (sp - this.prevVelSp) / dt;
         this.prevVelSp = sp;
         const ff = this.feedforward(sp, acc);
-        const outMax = this.pk('vel.out_max');
+        const outMax = this.pk(P_VEL_OUT_MAX);
         const out = clamp(kp * err + this.velInt + d + ff, -outMax, outMax);
         this.reference = sp;
         this.loopErr = err;
@@ -549,27 +668,22 @@ export class EscNode extends SimNode implements MotorDriver {
       case EscMode.POSITION: {
         if (remoteLost) return this.idle();
         this.profileStep(sp, dt);
-        const kp = this.pk('pos.kp');
-        const ki = this.pk('pos.ki');
-        const kd = this.pk('pos.kd');
-        const iMax = this.pk('pos.i_max');
+        const kp = this.pk(P_POS_KP);
+        const ki = this.pk(P_POS_KI);
+        const kd = this.pk(P_POS_KD);
+        const iMax = this.pk(P_POS_I_MAX);
         const err = this.profP - this.pos;
-        const tol = this.pk('pos.tolerance_rot');
+        const tol = this.pk(P_POS_TOLERANCE_ROT);
         const done = this.profP === sp && this.profV === 0;
         this.reference = this.profP;
         this.loopErr = err;
-        if (done && Math.abs(sp - this.pos) < tol) {
-          if (!this.holding) {
-            this.holding = true;
-            this.heldOut = this.loopOut;
-          }
-          this.setVoltage(this.heldOut);
-          return;
-        }
-        this.holding = false;
-        this.posInt = clamp(this.posInt + ki * err * dt, -iMax, iMax);
+        // Inside the allowed error the loop treats the error as zero: P and I stop acting and the
+        // learned integral (e.g. the gravity load) keeps holding.
+        const within = done && Math.abs(sp - this.pos) < tol;
+        const e = within ? 0 : err;
+        this.posInt = clamp(this.posInt + ki * e * dt, -iMax, iMax);
         const dErr = this.profV - this.velF / 60; // rot/s
-        const out = kp * err + this.posInt + kd * dErr + this.feedforward(this.profV * 60, this.profA * 60);
+        const out = kp * e + this.posInt + kd * dErr + this.feedforward(this.profV * 60, this.profA * 60);
         this.setVoltage(clamp(out, -vbus, vbus));
         return;
       }
@@ -577,20 +691,20 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private feedforward(rpm: number, rpmPerS: number): number {
-    const ks = this.pk('vel.ks');
-    return (rpm > 0 ? ks : rpm < 0 ? -ks : 0) + this.pk('vel.kv') * rpm + this.pk('vel.ka') * rpmPerS;
+    const ks = this.pk(P_VEL_KS);
+    return (rpm > 0 ? ks : rpm < 0 ? -ks : 0) + this.pk(P_VEL_KV) * rpm + this.pk(P_VEL_KA) * rpmPerS;
   }
 
   /** Trapezoidal motion profile towards `goal` (rot); state in rot, rot/s, rot/s². */
   private profileStep(goal: number, dt: number): void {
-    const cruise = this.pk('pos.cruise_rpm') / 60;
+    const cruise = this.pk(P_POS_CRUISE_RPM) / 60;
     if (cruise <= 0) {
       this.profP = goal;
       this.profV = 0;
       this.profA = 0;
       return;
     }
-    const accRaw = this.pk('pos.accel_rpm_s') / 60;
+    const accRaw = this.pk(P_POS_ACCEL_RPM_S) / 60;
     const acc = accRaw > 0 ? accRaw : 1e9;
     const dist = goal - this.profP;
     const v = this.profV;
@@ -619,8 +733,8 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private softLimit(out: number): number {
-    if (this.pk('limits.fwd_soft_enable') && this.pos >= this.pk('limits.fwd_soft_rot') && out > 0) return 0;
-    if (this.pk('limits.rev_soft_enable') && this.pos <= this.pk('limits.rev_soft_rot') && out < 0) return 0;
+    if (this.pk(P_LIMITS_FWD_SOFT_ENABLE) && this.pos >= this.pk(P_LIMITS_FWD_SOFT_ROT) && out > 0) return 0;
+    if (this.pk(P_LIMITS_REV_SOFT_ENABLE) && this.pos <= this.pk(P_LIMITS_REV_SOFT_ROT) && out < 0) return 0;
     return out;
   }
 
@@ -632,11 +746,11 @@ export class EscNode extends SimNode implements MotorDriver {
   }
 
   private pwmToDuty(p: number): number {
-    const min = this.pk('pwm.min_us');
-    const mid = this.pk('pwm.mid_us');
-    const max = this.pk('pwm.max_us');
-    const db = this.pk('pwm.deadband_us');
-    if (this.pk('pwm.bidirectional')) {
+    const min = this.pk(P_PWM_MIN_US);
+    const mid = this.pk(P_PWM_MID_US);
+    const max = this.pk(P_PWM_MAX_US);
+    const db = this.pk(P_PWM_DEADBAND_US);
+    if (this.pk(P_PWM_BIDIRECTIONAL)) {
       if (Math.abs(p - mid) <= db / 2) return 0;
       return p > mid ? clamp((p - mid) / Math.max(1, max - mid), 0, 1) : -clamp((mid - p) / Math.max(1, mid - min), 0, 1);
     }
@@ -647,7 +761,7 @@ export class EscNode extends SimNode implements MotorDriver {
   private thermal(m: Motor | null): void {
     const i = m ? m.current : 0;
     const vbus = this.supplyV;
-    const p = i * i * this.stage.rdsOhm * 2 + 4e-5 * this.pk('motor.pwm_khz') * vbus * Math.abs(i) + 0.15 + this.extraHeatW;
+    const p = i * i * this.stage.rdsOhm * 2 + 4e-5 * this.pk(P_MOTOR_PWM_KHZ) * vbus * Math.abs(i) + 0.15 + this.extraHeatW;
     const amb = this.ctx.world.ambientC;
     this.fetTemp += ((p - (this.fetTemp - amb) / this.stage.thermalR) / this.stage.thermalC) * 0.001;
   }
@@ -661,7 +775,7 @@ export class EscNode extends SimNode implements MotorDriver {
       case Act.MEASURE: {
         if (busy || this.estopped || this.cutting()) return { status: CommandStatus.DENIED, result: 0 };
         if (!this.motor) return { status: CommandStatus.FAILED, result: 0 };
-        if (cmd === Act.DETECT && this.pk('fb.source') === FbSource.SENSORLESS) return { status: CommandStatus.OK, result: 0 };
+        if (cmd === Act.DETECT && this.pk(P_FB_SOURCE) === FbSource.SENSORLESS) return { status: CommandStatus.OK, result: 0 };
         this.act = cmd;
         this.actT0 = this.now;
         this.actA = this.sensorRaw();
@@ -693,7 +807,7 @@ export class EscNode extends SimNode implements MotorDriver {
 
   /** Sensor reading in sensor counts as the firmware sees it before inversion settings. */
   private sensorRaw(): number {
-    const src = this.pk('fb.source');
+    const src = this.pk(P_FB_SOURCE);
     if (src === FbSource.REMOTE) return this.remotePos;
     const m = this.motor;
     return m && m.hallInverted ? -this.hallCount : this.hallCount;
@@ -736,7 +850,7 @@ export class EscNode extends SimNode implements MotorDriver {
         this.driveKind = Drive.COAST;
         const delta = this.sensorRaw() - this.actA;
         if (Math.abs(delta) < 1e-3) return this.completeCommand(Act.DETECT, CommandStatus.FAILED, 0);
-        const inv = this.pk('motor.invert') ? -1 : 1;
+        const inv = this.pk(P_MOTOR_INVERT) ? -1 : 1;
         // Driving "positive" must move the sensor positive once inversion settings apply.
         const newInvert = delta * inv < 0 ? 1 : 0;
         this.params.setKey('fb.sensor_invert', newInvert);
@@ -751,7 +865,7 @@ export class EscNode extends SimNode implements MotorDriver {
       return;
     }
     this.driveKind = Drive.VOLTAGE;
-    this.vCmd = 0.5 * vbus * (this.pk('motor.invert') ? -1 : 1);
+    this.vCmd = 0.5 * vbus * (this.pk(P_MOTOR_INVERT) ? -1 : 1);
     if (t > 900) {
       // Average the back-EMF ratio over the steady part of the spin.
       const v = m.voltage - m.current * m.spec.resistance;
@@ -774,7 +888,7 @@ export class EscNode extends SimNode implements MotorDriver {
 
   protected override selfTest(): number {
     let bits = 0;
-    if (this.pk('fb.source') === FbSource.HALL && this.hallLost) bits |= 1 << 4;
+    if (this.pk(P_FB_SOURCE) === FbSource.HALL && this.hallLost) bits |= 1 << 4;
     if (this.disconnected || (this.motor && !this.motor.connected)) bits |= 1 << 0;
     return bits;
   }

@@ -108,6 +108,8 @@ Kart şu iki durumdan birinde **CONFLICT** durumuna geçer:
 
 CONFLICT'e geçen kart hemen (0–20 ms rastgele gecikmeyle) CONFLICT bayraklı bir `ENUM_RSP` yayınlar; böylece aynı numaradaki diğer kart da CONFLICT'e geçer. Sonuç belirlenimcidir: aynı numarayı paylaşan kartların **hepsi** susar, hangisinin "kazandığı" açılış sırasına bağlı kalmaz. CONFLICT kalıcı değildir (yeniden başlatınca yeniden algılanır) ve yalnızca kartın `uid48`'ine gelen `ASSIGN_ID` ile biter (aynı numara yeniden atanabilir).
 
+Host çakışmayı şu sırayla çözer: önce numarası değişecek kartlara yeni numaralarını atar, **en son** numarayı koruyacak karta aynı numarayı yeniden atar. Böylece çözüm bittiğinde o numarayı bildiren başka kart kalmaz.
+
 CONFLICT ve atanmamış (`NUM = 63`) kartlar:
 
 - HEARTBEAT, STATUS, STREAM göndermez; CTRL kabul etmez (eyleyiciler nötr),
@@ -142,6 +144,8 @@ Adresli: `[seconds u8]` (0 = kapat). UID'li yayın: `[uid48 6B] [seconds u8]`. �
 | 3 | `git_hash u32, build_day u16 (2026-01-01'den gün), dirty u8` |
 | 4,5,6 | Kullanıcı adı, UTF-8, 21 bayt, sıfır dolgulu ("Sol ön itici") |
 
+Tanımsız sayfa isteği yanıtsız kalır.
+
 ### 4.4 NAME_SET (SYS_REQ/4) `[page u8 (0..2)] [7 bayt]` → INFO_RSP page 4+page. Kalıcılık `SAVE_PARAMS` ile.
 
 ### 4.5 COMMAND (SYS_REQ/5) `[cmd u8] [arg u32] [0 0 0]` → COMMAND_RSP (SYS_RSP/5) `[cmd u8] [status u8] [result u32] [0 0]`
@@ -150,6 +154,7 @@ Ortak komutlar: `1 REBOOT · 2 ENTER_BOOTLOADER · 3 SAVE_PARAMS · 4 LOAD_DEFAU
 `status`: `0 OK · 1 IN_PROGRESS · 2 UNSUPPORTED · 3 INVALID_ARG · 4 DENIED (ör. sürülürken) · 5 FAILED`.
 Uzun işlemler önce `IN_PROGRESS`, bitince `OK/FAILED` + `result` yollar. `SELF_TEST` sonucu: bit maskesi, 0 = hepsi geçti (bit anlamları katalogda).
 `LOAD_DEFAULTS` yalnızca RAM'i değiştirir (NUM ve ad korunur); kalıcı olması için `SAVE_PARAMS` gerekir.
+Eyleyici sürülürken (`ENABLED`) `REBOOT`, `ENTER_BOOTLOADER` ve `LOAD_DEFAULTS` `DENIED` döner.
 
 ### 4.6 FAULT_REQ (SYS_REQ/6) → FAULT_RSP (SYS_RSP/6) `[active u16] [sticky u16] [warn u16] [0 0]`
 
@@ -189,7 +194,7 @@ Ortak parametreler:
 
 ## 7. Kontrol çerçeveleri (CTRL)
 
-Katalogdaki `controls` tanımlar. Ortak kural: eyleyici, `ctrl.timeout_ms` içinde yeni CTRL çerçevesi almazsa nötr olur ve `CTRL_TIMEOUT` uyarısı verir. Standart biçim (ESC, sızdırmaz servo):
+Katalogdaki `controls` tanımlar. CTRL yalnızca tek karta adreslenir; yayın (`NUM = 0` veya `DEVTYPE = 0`) CTRL çerçeveleri yok sayılır. Ortak kural: eyleyici, `ctrl.timeout_ms` içinde yeni CTRL çerçevesi almazsa nötr olur ve `CTRL_TIMEOUT` uyarısı verir. Standart biçim (ESC, sızdırmaz servo):
 
 ```
 CTRL/0 SET: [mode u8] [flags u8] [0 0] [value f32]
@@ -229,9 +234,10 @@ status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ER
 ```
 
 - Kart `BEGIN` sonrası (silme sürerken `BUSY`, bitince `OK`), her `window` DATA çerçevesinde bir (varsayılan 16), sıra bozulunca (`BAD_OFFSET` + beklenen `next_offset`) ve `END` sonrası `ACK` yollar.
-- Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Yalnızca son `DATA` parçası kısa olabilir; `size`'ı aşan dolgu baytları yok sayılır.
+- Kart sıra bozulduğunda pencere başına bir kez `BAD_OFFSET` yollar (her bozuk çerçeveye ayrı yanıt vermez). Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Yalnızca son `DATA` parçası kısa olabilir; `size`'ı aşan dolgu baytları yok sayılır.
 - Pencere sayacı her `ACK`'tan sonra (BAD_OFFSET dahil) sıfırlanır. Son, eksik kalan pencere için ayrıca `ACK` gönderilmez; onu `END`'in `ACK`'ı kapatır.
 - Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner.
+- Bootloader HEARTBEAT'inin sürüm alanları kurulu imajın sürümünü taşır (geçerli imaj yoksa 0.0.0).
 - Bootloader `HEARTBEAT` (state = BOOTLOADER), `ENUM_REQ`, `ASSIGN_ID`, `IDENTIFY`, `INFO_REQ` sayfa 0–2 ve `COMMAND REBOOT`'a yanıt verir; diğer her şeye yanıtsız kalır.
 
 ### 9.1 `.cyfw` dosyası
