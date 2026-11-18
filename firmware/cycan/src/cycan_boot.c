@@ -417,6 +417,8 @@ void cycan_boot_poll(cycan_boot_t *b, uint32_t now_us)
         b->rx_tail = (uint8_t)((b->rx_tail + 1u) & RX_MASK);
     }
     if (b->state == CYCAN_BOOT_ERASE) {
+        /* PROTOCOL 9: once erased there is no valid image, so the heartbeat reports 0.0.0. */
+        memset(b->app_fw, 0, sizeof b->app_fw);
         if (b->hal->flash_erase(b->hal->ctx, b->size)) {
             b->state = CYCAN_BOOT_RECEIVE;
             ack(b, CYCAN_FWST_OK);

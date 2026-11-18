@@ -8,6 +8,7 @@ import { describeFrame } from './describe';
 import { Emitter } from './emitter';
 import { CyError } from './errors';
 import { type BusStats, StatsCounter } from './stats';
+import { parseUid48 } from './uid';
 import type {
   AbortSignalLike,
   BusDriver,
@@ -223,8 +224,16 @@ export class CygnusBus {
     return this.cycan.deviceAt(devType, num);
   }
 
+  /** Looks up a board of any driver by its `uid48` (legacy boards: their UID zero-padded). */
   deviceByUid(uid48: string | number): DeviceHandle | undefined {
-    return this.cycan.deviceByUid(uid48);
+    const found = this.cycan.deviceByUid(uid48);
+    if (found) return found;
+    const want = parseUid48(uid48);
+    for (const d of this.drivers) {
+      if (d === this.cycan) continue;
+      for (const h of d.devices()) if (parseUid48(h.uid48) === want) return h;
+    }
+    return undefined;
   }
 
   get unresolved(): DeviceHandle[] {

@@ -1,4 +1,5 @@
 import { CATALOG, NUM_MAX, NUM_MIN, paramByKey } from '@cygnus/protocol';
+import { slotDevTypes } from './templates/helpers';
 import type { LocalizedText, SlotBinding, VehicleConfig, VehicleSlot, VehicleTemplate } from './types';
 
 export interface TemplateIssue { slotId?: string; detail: string }
@@ -28,6 +29,18 @@ export function validateTemplate(tpl: VehicleTemplate): TemplateIssue[] {
     });
     for (const key of Object.keys(s.presets ?? {})) {
       if (!defs.some((d) => d && paramByKey(d, key))) add(`preset key ${key} not in any accepted model`, s.id);
+    }
+  }
+  // The bus address is DEVTYPE + NUM: two slots that may hold boards of one type must not
+  // suggest the same number (e.g. power distribution and SoC regulator share DEVTYPE 8).
+  const byAddr = new Map<string, string>();
+  for (const s of tpl.slots) {
+    if (s.suggestedNum === undefined) continue;
+    for (const t of slotDevTypes(s)) {
+      const k = `${t}:${s.suggestedNum}`;
+      const other = byAddr.get(k);
+      if (other) add(`suggestedNum ${s.suggestedNum} also used by ${other} (DEVTYPE ${t})`, s.id);
+      else byAddr.set(k, s.id);
     }
   }
   return issues;

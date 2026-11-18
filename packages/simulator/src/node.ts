@@ -50,7 +50,6 @@ import {
   readU24,
   readU32,
   readU48,
-  EnumFlag,
   readParamValue,
   statusPeriodPid,
   uid96ToInfoPages,
@@ -195,8 +194,6 @@ export abstract class SimNode implements BusEndpoint {
   num: number;
   readonly name = new Uint8Array(NAME_BYTES);
   conflict = false;
-  /** Number came from an ASSIGN_ID during this power cycle. */
-  private hostAssigned = false;
   private bootDoneAt = 0;
   private bootIntoLoader = false;
   private identifyUntil = -1;
@@ -213,6 +210,7 @@ export abstract class SimNode implements BusEndpoint {
   private enumRetried = false;
   private longCmd = -1;
   private selfTestAt = -1;
+  private clearStickyAt = -1;
   private ctrlSeen = false;
   private lastCtrlMs = 0;
   private canErr = false;
@@ -307,6 +305,11 @@ export abstract class SimNode implements BusEndpoint {
   /** Frames other boards send (STATUS, HEARTBEAT…), for boards that listen to peers. */
   protected onPeerFrame(_f: BusFrame): void {}
   protected readonly listensToPeers: boolean = false;
+  /**
+   * False for boards running another protocol (legacy Cyncoder v3): the base class then only
+   * boots and powers them and runs `appTick`; they override `receive` and send their own frames.
+   */
+  protected readonly speaksCyCan: boolean = true;
   /** Model command (≥ 0x40); long actions answer IN_PROGRESS and later call completeCommand. */
   protected action(_cmd: number, _arg: number): { status: number; result: number } {
     return { status: CommandStatus.UNSUPPORTED, result: 0 };
@@ -491,7 +494,6 @@ export abstract class SimNode implements BusEndpoint {
   private finishBoot(): void {
     this.num = this.flashNum;
     this.conflict = false;
-    this.hostAssigned = false;
     this.name.set(this.flashName);
     this.faultActive = 0;
     this.faultWarn = 0;
@@ -533,6 +535,10 @@ export abstract class SimNode implements BusEndpoint {
       this.canErr = shorted;
       this.setFault(FaultBit.CAN_ERR, shorted);
     }
+    if (!this.speaksCyCan) {
+      this.appTick();
+      return;
+    }
     if (this.enumAt >= 0 && now >= this.enumAt) {
       this.enumAt = -1;
       this.sendEnumRsp();
@@ -547,6 +553,10 @@ export abstract class SimNode implements BusEndpoint {
       this.completeCommand(Command.SELF_TEST, CommandStatus.OK, (this.selfTest() | this.selfTestMask) >>> 0);
     }
     this.appTick();
+    if (this.clearStickyAt >= 0 && now >= this.clearStickyAt) {
+      this.clearStickyAt = -1;
+      this.faultSticky &= this.faultActive | this.faultWarn;
+    }
     if (this.actuator && this.ctrlSeen && now - this.lastCtrlMs > this.p(this.pCtrlTimeout)) {
       this.ctrlSeen = false;
       this.setWarn(FaultBit.CTRL_TIMEOUT, true);
@@ -610,15 +620,11 @@ export abstract class SimNode implements BusEndpoint {
     if (!this.assigned || idDevType(f.id) !== this.def.devType || f.len < 8) return;
     const flags = f.data[6] ?? 0;
     if ((flags & 0x3f) !== this.num || readU48(f.data, 0) === this.uid48) return;
-    // Protocol question: a board the host just (re)assigned ignores CONFLICT-flagged replies of
-    // boards still waiting for their own ASSIGN_ID, or re-assigning the same number could never stick.
-    if (this.hostAssigned && (flags & EnumFlag.CONFLICT) !== 0) return;
     this.enterConflict();
   }
 
   private enterConflict(): void {
     this.conflict = true;
-    this.hostAssigned = false;
     this.streamOn = false;
     this.neutral();
     // Announce it so every board on this number falls silent, whatever the boot order.
@@ -643,7 +649,8 @@ export abstract class SimNode implements BusEndpoint {
         this.num = m.newNum;
         if (m.persist) this.flashNum = m.newNum;
         this.conflict = false;
-        this.hostAssigned = true;
+        // The confirmation below replaces any reply or conflict announcement still pending.
+        this.enumAt = -1;
         this.hbNext = this.now + this.hbPhase;
         this.sendEnumRsp();
         return;
@@ -790,6 +797,7 @@ export abstract class SimNode implements BusEndpoint {
     }
     switch (cmd) {
       case Command.REBOOT:
+        if (enabled) return this.respond(cmd, CommandStatus.DENIED, 0);
         this.respond(cmd, CommandStatus.OK, 0);
         this.reboot(false);
         return;
@@ -814,6 +822,9 @@ export abstract class SimNode implements BusEndpoint {
       case Command.CLEAR_FAULTS:
         this.onClearFaults();
         this.faultSticky = this.faultActive | this.faultWarn;
+        // Latched model faults released above drop out of `faultActive` at the next app step;
+        // only what is still active then stays sticky.
+        this.clearStickyAt = this.now + 1;
         this.respond(cmd, CommandStatus.OK, 0);
         return;
       case Command.SELF_TEST:
@@ -868,7 +879,8 @@ export abstract class SimNode implements BusEndpoint {
     if (!this.assigned || this.now < this.hbNext) return;
     this.hbNext += Timing.HEARTBEAT_MS;
     if (this.hbNext <= this.now) this.hbNext = this.now + Timing.HEARTBEAT_MS;
-    const fw = this.appFw;
+    // PROTOCOL §9: the bootloader reports the installed image, 0.0.0 once it was erased.
+    const fw = this.appValid ? this.appFw : { major: 0, minor: 0, patch: 0 };
     this.send(
       encodeHeartbeat(this.addr, {
         state: this.state,

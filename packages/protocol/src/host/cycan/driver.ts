@@ -228,26 +228,59 @@ export class CyCanDriver implements BusDriver, DeviceHost {
 
   /**
    * First free number of a type. Numbers of known resolved boards stay reserved even while
-   * they are lost, so a board that comes back does not collide.
+   * they are lost, so a board that comes back does not collide; a number boards are in
+   * conflict over is reserved too, since one of them keeps it (PROTOCOL §3.4).
    */
   suggestNumber(devType: number, taken: ReadonlySet<number> = new Set()): number | null {
     const used = new Set(taken);
     for (const d of this.byUid.values()) {
-      if (d.devType === devType && !this.isUnresolved(d) && d.resolved) used.add(d.num);
+      if (d.devType !== devType || d.unassigned) continue;
+      if (d.resolved || d.online) used.add(d.num);
     }
     for (let n = NUM_MIN; n <= NUM_MAX; n++) if (!used.has(n)) return n;
     return null;
   }
 
+  /**
+   * PROTOCOL §3.4: in every group of boards claiming one address the lowest uid48 keeps the
+   * number; the others and the unassigned boards take the first free numbers of their type.
+   * Boards that move come first; the keepers get their own number re-assigned last, so when
+   * the resolution ends no other board still reports that number.
+   */
   planResolve(): ResolveStep[] {
+    const movers: CyCanDevice[] = [];
+    const keepers: CyCanDevice[] = [];
+    const groups = new Set<number>();
+    for (const d of this.unresolved()) {
+      if (d.unassigned) movers.push(d);
+      else groups.add(addrKey(d.devType, d.num));
+    }
+    for (const key of groups) {
+      const members = (this.byAddr.get(key) ?? []).filter((x) => x.online && !x.unassigned);
+      members.sort((a, b) => a.uid48Num - b.uid48Num);
+      const [keeper, ...rest] = members;
+      if (keeper) keepers.push(keeper);
+      movers.push(...rest);
+    }
+    const order = (a: CyCanDevice, b: CyCanDevice): number => a.devType - b.devType || a.uid48Num - b.uid48Num;
+    movers.sort(order);
+    keepers.sort(order);
     const taken = new Map<number, Set<number>>();
-    return this.unresolved().map((d) => {
-      let t = taken.get(d.devType);
-      if (!t) taken.set(d.devType, (t = new Set()));
+    const takenFor = (devType: number): Set<number> => {
+      let t = taken.get(devType);
+      if (!t) taken.set(devType, (t = new Set()));
+      return t;
+    };
+    for (const k of keepers) takenFor(k.devType).add(k.num);
+    const step = (d: CyCanDevice, to: number | null): ResolveStep => ({ device: d, uid48: d.uid48, devType: d.devType, from: d.num, to });
+    const out = movers.map((d) => {
+      const t = takenFor(d.devType);
       const to = this.suggestNumber(d.devType, t);
       if (to !== null) t.add(to);
-      return { device: d, uid48: d.uid48, devType: d.devType, from: d.num, to };
+      return step(d, to);
     });
+    for (const k of keepers) out.push(step(k, k.num));
+    return out;
   }
 
   async resolveAll(opts: { persist?: boolean } = {}): Promise<ResolveOutcome[]> {

@@ -4,8 +4,12 @@ import * as T from './templates';
 export * from './types';
 export { validateTemplate, validateConfig } from './validate';
 export type { TemplateIssue, ConfigIssue, ConfigIssueCode } from './validate';
-export { planApply } from './plan';
+export { planApply, fitName } from './plan';
 export type { PlanDevice, PlanStep, PlanWarning, PlanResult } from './plan';
+export { applyPlan, planDevices } from './apply';
+export type { ApplyBus, ApplyStep, ApplyStepResult, ApplyResult, ApplyOptions } from './apply';
+export { detectMovedEncoder, detectTiltedGyro } from './detect';
+export type { DetectBus, DetectOptions, DetectEncoderOptions, DetectGyroOptions, DetectResult } from './detect';
 
 export const templates: readonly VehicleTemplate[] = [
   T.frcSwerve4, T.frcTank, T.frcMecanum4,

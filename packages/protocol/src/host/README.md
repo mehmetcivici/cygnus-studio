@@ -12,7 +12,7 @@ bus.on('stats', (s) => setHealth(s.loadPct, s.rxFps, s.txFps, s.requestTimeouts)
 bus.on('transportState', (s) => setLink(s.phase, s.error));
 await bus.start();                                    // transport.open + 1 s ENUM taraması + heartbeat izleme
 bus.devices;                                          // tip/numara/UID sırasında, kayıplar dahil (d.online)
-bus.device(2, 3); bus.deviceByUid('a867d8040149');    // kimlik uid48'dir; numara değişse de handle aynı kalır
+bus.device(2, 3); bus.deviceByUid('a867d8040149');    // kimlik uid48'dir; numara değişse de handle aynı kalır (eski kartlar: UID'leri 12 haneye dolgulu)
 bus.estop();                                          // tüm control döngülerini keser + yayın ESTOP
 await bus.stop();                                     // bekleyen her şey DISCONNECTED ile biter, cihazlar silinir
 ```
@@ -25,8 +25,10 @@ await bus.stop();                                     // bekleyen her şey DISCO
 ```ts
 bus.unresolved;                         // CONFLICT, NUM=63 veya aynı adreste iki bayraksız kart
 bus.identifyByUid(d.uid48, 5);          // atanmamış kart da LED yakar
-bus.suggestNumber(d.devType);           // o tipteki ilk boş numara (kayıp kartların numarası ayrılmış sayılır)
+bus.suggestNumber(d.devType);           // o tipteki ilk boş numara (kayıp kartların ve çakışılan numara ayrılmış sayılır)
 const plan = bus.planResolve();         // [{ device, from, to }] — önce kullanıcıya göster
+// PROTOCOL §3.4: çakışma grubunda en düşük uid48 numarayı korur (son adım, from === to), diğerleri ve
+// atanmamışlar ilk boş numaraları alır; numarası değişecek kartlar önce, koruyan kart en son atanır.
 await bus.resolveAll({ persist: true }); // [{ ...plan, ok, error? }]
 await bus.assignId(d.uid48, 7);         // dolu numara → CyError INVALID reason 'number_taken' ({force:true} ile geçilir)
 ```
@@ -41,6 +43,7 @@ const v = await d.getParam('vel.kp');              // önbellek: d.cachedParam(k
 await d.setParam('vel.kp', 0.002);                 // önce katalogla denetlenir, sonra kart statüsü
 const { values, failed } = await d.readAllParams({ onProgress: ({ done, total }) => bar(done / total) });
 await d.save(); await d.loadDefaults(); await d.rename('Sol ön itici');
+await d.reboot();                                   // önbellek ve INFO düşer; heartbeat dönünce yeniden okunur
 await d.command('measure_motor', 0, { onProgress: () => spin() });   // IN_PROGRESS → nihai sonuç
 const st = await d.selfTest();                     // { passed, mask, failed: BitDef[] } (katalog etiketleri)
 await d.identify(5); await d.reboot(); await d.clearFaults(); await d.clearEstop(); await d.readFaults();

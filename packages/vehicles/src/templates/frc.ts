@@ -8,6 +8,8 @@ const MODULES = [
   { id: 'br', x: 0.6, y: -0.6, tr: 'Arka sağ', en: 'Back right' },
 ] as const;
 
+const STEER_PRESETS = { 'motor.idle_mode': 0, 'fb.source': 2, 'fb.remote_ratio': 1, 'pos.kp': 30, 'pos.kd': 0.4 } as const;
+
 export const frcSwerve4: VehicleTemplate = {
   id: 'frc.swerve4',
   category: 'frc',
@@ -22,7 +24,8 @@ export const frcSwerve4: VehicleTemplate = {
       return [
         slot({ id: `${m.id}.drive`, role: 'drive', group: m.id, label: t(`${m.tr} · sürüş`, `${m.en} · drive`), accepts: ACCEPT.motor, pos: [m.x, m.y + 0.16], headingDeg: 0, suggestedNum: i + 1, presets: DRIVE_PRESETS }),
         // Steer motors read the module angle from the remote Cyncoder so the loop closes on the wheel, not the motor.
-        slot({ id: `${m.id}.steer`, role: 'steer', group: m.id, label: t(`${m.tr} · dönüş`, `${m.en} · steer`), accepts: ACCEPT.motor, pos: [m.x - sx * 0.16, m.y - 0.1], suggestedNum: i + 5, presets: { 'motor.idle_mode': 0, 'fb.source': 2 } }),
+        // Starting gains for a typical NEO 550 + 150/7 steer stage; the factory default would not overcome the module's friction.
+        slot({ id: `${m.id}.steer`, role: 'steer', group: m.id, label: t(`${m.tr} · dönüş`, `${m.en} · steer`), accepts: ACCEPT.motor, pos: [m.x - sx * 0.16, m.y - 0.1], suggestedNum: i + 5, presets: STEER_PRESETS }),
         slot({ id: `${m.id}.enc`, role: 'steerEncoder', group: m.id, label: t(`${m.tr} · encoder`, `${m.en} · encoder`), accepts: ACCEPT.encoder, pos: [m.x + sx * 0.16, m.y - 0.1], suggestedNum: i + 1 }),
       ];
     }),

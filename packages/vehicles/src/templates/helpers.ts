@@ -1,3 +1,4 @@
+import { CATALOG, NUM_MIN } from '@cygnus/protocol';
 import type { LocalizedText, SlotAccept, SlotRole, VehicleSlot } from '../types';
 
 export const t = (tr: string, en: string): LocalizedText => ({ tr, en });
@@ -48,23 +49,38 @@ export function slot(i: SlotInit): VehicleSlot {
   return s;
 }
 
-/** Cards of one family share a number space (same devType), so slots are numbered per family. */
-function family(s: VehicleSlot): string {
-  const m = s.accepts[0]?.model ?? '';
-  if (m.startsWith('esc')) return 'esc';
-  if (m === 'sealed_servo' || m === 'servo16') return 'servo';
-  if (m.startsWith('pdh')) return 'pdh';
-  return m;
+/**
+ * Device types a slot can put on the bus as a whole board. Channel-only slots count as their
+ * board's type too, so channel slots and boards of that type do not get equal suggestions.
+ */
+export function slotDevTypes(s: VehicleSlot): number[] {
+  const out = new Set<number>();
+  for (const a of s.accepts) {
+    const d = CATALOG.find((m) => m.key === a.model);
+    if (d) out.add(d.devType);
+  }
+  return [...out];
 }
 
-/** Fills missing suggestedNum values in slot order, per device family. */
+/**
+ * Fills missing suggestedNum values in slot order. Numbers are unique per DEVTYPE (the bus
+ * address is DEVTYPE + NUM), so e.g. the power distribution board and the SoC regulator
+ * (both DEVTYPE 8) never get the same suggestion; explicit values are kept and reserved first.
+ */
 export function numbered(slots: VehicleSlot[]): VehicleSlot[] {
-  const counters = new Map<string, number>();
+  const used = new Map<number, Set<number>>();
+  const usedFor = (t: number): Set<number> => {
+    let u = used.get(t);
+    if (!u) used.set(t, (u = new Set()));
+    return u;
+  };
+  for (const s of slots) if (s.suggestedNum !== undefined) for (const t of slotDevTypes(s)) usedFor(t).add(s.suggestedNum);
   return slots.map((s) => {
     if (s.suggestedNum !== undefined) return s;
-    const f = family(s);
-    const n = (counters.get(f) ?? 0) + 1;
-    counters.set(f, n);
+    const types = slotDevTypes(s);
+    let n = NUM_MIN;
+    while (types.some((t) => usedFor(t).has(n))) n++;
+    for (const t of types) usedFor(t).add(n);
     return { ...s, suggestedNum: n };
   });
 }

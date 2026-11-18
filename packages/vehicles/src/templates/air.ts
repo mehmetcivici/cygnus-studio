@@ -16,14 +16,16 @@ function multirotor(id: string, shape: VehicleTemplate['shape'], name: VehicleTe
 }
 
 // Motor numbering and spin follow the ArduPilot frame layouts.
-export const airQuadX = multirotor('air.quadx', 'x-frame', t('Quadcopter X', 'Quadcopter X'), t('4 pervane, X düzeni (ArduPilot motor sırası).', 'Four propellers in X layout (ArduPilot motor order).'), [
+// Source: ArduPilot AP_MotorsMatrix.cpp setup_quad_matrix, MOTOR_FRAME_TYPE_X (motor number = array index + 1).
+export const airQuadX =multirotor('air.quadx', 'x-frame', t('Quadcopter X', 'Quadcopter X'), t('4 pervane, X düzeni (ArduPilot motor sırası).', 'Four propellers in X layout (ArduPilot motor order).'), [
   { n: 1, pos: [0.6, 0.6], spin: 'ccw', tr: 'ön sağ', en: 'front right' },
   { n: 2, pos: [-0.6, -0.6], spin: 'ccw', tr: 'arka sol', en: 'rear left' },
   { n: 3, pos: [-0.6, 0.6], spin: 'cw', tr: 'ön sol', en: 'front left' },
   { n: 4, pos: [0.6, -0.6], spin: 'cw', tr: 'arka sağ', en: 'rear right' },
 ]);
 
-export const airQuadPlus = multirotor('air.quadplus', 'plus-frame', t('Quadcopter +', 'Quadcopter +'), t('4 pervane, + düzeni (ArduPilot motor sırası).', 'Four propellers in + layout (ArduPilot motor order).'), [
+// Source: ArduPilot AP_MotorsMatrix.cpp setup_quad_matrix, MOTOR_FRAME_TYPE_PLUS.
+export const airQuadPlus =multirotor('air.quadplus', 'plus-frame', t('Quadcopter +', 'Quadcopter +'), t('4 pervane, + düzeni (ArduPilot motor sırası).', 'Four propellers in + layout (ArduPilot motor order).'), [
   { n: 1, pos: [0.7, 0], spin: 'ccw', tr: 'sağ', en: 'right' },
   { n: 2, pos: [-0.7, 0], spin: 'ccw', tr: 'sol', en: 'left' },
   { n: 3, pos: [0, 0.7], spin: 'cw', tr: 'ön', en: 'front' },
@@ -41,11 +43,13 @@ const side = (deg: number): { tr: string; en: string } => {
 const ring = (spec: [number, number, 'cw' | 'ccw'][], r: number): Motor[] =>
   spec.map(([n, deg, spin]) => ({ n, pos: polar(deg, r), spin, ...side(deg) }));
 
-export const airHexaX = multirotor('air.hexax', 'hexa-frame', t('Hexacopter X', 'Hexacopter X'), t('6 pervane, X düzeni (ArduPilot motor sırası).', 'Six propellers in X layout (ArduPilot motor order).'),
+// Source: ArduPilot AP_MotorsMatrix.cpp setup_hexa_matrix, MOTOR_FRAME_TYPE_X.
+export const airHexaX =multirotor('air.hexax', 'hexa-frame', t('Hexacopter X', 'Hexacopter X'), t('6 pervane, X düzeni (ArduPilot motor sırası).', 'Six propellers in X layout (ArduPilot motor order).'),
   ring([[1, 90, 'cw'], [2, -90, 'ccw'], [3, -30, 'cw'], [4, 150, 'ccw'], [5, 30, 'ccw'], [6, -150, 'cw']], 0.8));
 
-export const airOctoX = multirotor('air.octox', 'octo-frame', t('Oktokopter X', 'Octocopter X'), t('8 pervane, X düzeni (yan komşular ters yönde döner).', 'Eight propellers in X layout (neighbours counter-rotate).'),
-  ring([[1, 22.5, 'cw'], [2, -157.5, 'cw'], [3, 67.5, 'ccw'], [4, 157.5, 'ccw'], [5, -22.5, 'ccw'], [6, -112.5, 'ccw'], [7, 112.5, 'cw'], [8, -67.5, 'cw']], 0.8));
+// Source: ArduPilot AP_MotorsMatrix.cpp setup_octa_matrix, MOTOR_FRAME_TYPE_X.
+export const airOctoX =multirotor('air.octox', 'octo-frame', t('Oktokopter X', 'Octocopter X'), t('8 pervane, X düzeni (yan komşular ters yönde döner).', 'Eight propellers in X layout (neighbours counter-rotate).'),
+  ring([[1, 22.5, 'cw'], [2, -157.5, 'cw'], [3, 67.5, 'ccw'], [4, 157.5, 'ccw'], [5, -22.5, 'ccw'], [6, -112.5, 'ccw'], [7, -67.5, 'cw'], [8, 112.5, 'cw']], 0.8));
 
 export const airPlane: VehicleTemplate = {
   id: 'air.plane',

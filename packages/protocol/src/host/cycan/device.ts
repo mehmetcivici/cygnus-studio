@@ -674,6 +674,10 @@ export class CyCanDevice implements DeviceHandle {
 
   async reboot(): Promise<void> {
     await this.command(Command.REBOOT);
+    // RAM is reloaded from flash (unsaved values are gone) and the board is silent while it
+    // boots: drop the cache and re-read INFO when its heartbeat returns.
+    this.invalidateInfo();
+    this.changed();
   }
 
   async clearFaults(): Promise<void> {

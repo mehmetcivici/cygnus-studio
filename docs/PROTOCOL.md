@@ -128,7 +128,7 @@ state_flags: bit0..3 state · bit4 UNSAVED (kaydedilmemiş parametre) · bit5 EN
 state: 0 BOOT · 1 BOOTLOADER · 2 IDLE · 3 ACTIVE · 4 FAULT · 5 ESTOP
 ```
 
-Host 1500 ms heartbeat almazsa kartı **kayıp** sayar.
+Kart her açılışta ilk HEARTBEAT'i 100 ms içinde ve `state = BOOT` ile gönderir; host bunu görünce kartın yeniden başladığını anlar ve o karta ait önbelleğini (parametreler, INFO) geçersiz sayar. Host 1500 ms heartbeat almazsa kartı **kayıp** sayar.
 
 ### 4.2 IDENTIFY (SYS_REQ/2)
 
@@ -237,6 +237,7 @@ status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ER
 - Kart sıra bozulduğunda pencere başına bir kez `BAD_OFFSET` yollar (her bozuk çerçeveye ayrı yanıt vermez). Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Yalnızca son `DATA` parçası kısa olabilir; `size`'ı aşan dolgu baytları yok sayılır.
 - Pencere sayacı her `ACK`'tan sonra (BAD_OFFSET dahil) sıfırlanır. Son, eksik kalan pencere için ayrıca `ACK` gönderilmez; onu `END`'in `ACK`'ı kapatır.
 - Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner.
+- Bootloader, kalıcı `can.data_bitrate` ayarıyla çalışır (ayar alanı geçersizse klasik kip). Host parça boyunu hattın kipine göre seçer.
 - Bootloader HEARTBEAT'inin sürüm alanları kurulu imajın sürümünü taşır (geçerli imaj yoksa 0.0.0).
 - Bootloader `HEARTBEAT` (state = BOOTLOADER), `ENUM_REQ`, `ASSIGN_ID`, `IDENTIFY`, `INFO_REQ` sayfa 0–2 ve `COMMAND REBOOT`'a yanıt verir; diğer her şeye yanıtsız kalır.
 

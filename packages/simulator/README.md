@@ -12,8 +12,11 @@ import { scenarios, createScenario, RealtimeRunner } from '@cygnus/simulator';
 
 scenarios;                         // [{ id, name: {tr,en}, description, category: 'bench'|'demo'|'vehicle' }]
 const sim = createScenario('bench.flywheel', { seed: 1 });
-// ids: bench.flywheel · bench.arm · factory.fresh · all.devices · vehicle.<templateId> (e.g. vehicle.frc.swerve4)
+// ids: bench.flywheel · bench.arm · factory.fresh · legacy.cyncoder · all.devices · vehicle.<templateId> (e.g. vehicle.frc.swerve4)
 // options: { seed, assigned: false (factory-fresh boards, for the vehicle wizard), fd: false, useServoChannels }
+// fd: false is a classic-only bus: every board is built with can.data_bitrate = 0 (classic mode).
+// legacy.cyncoder (classic by default): two Cyncoder 1.4 on the legacy v3 firmware + one CyCAN Cyncoder;
+// all.devices also has one legacy board ('cyncoder_v3'). Add `new CyncoderV3Driver()` to the CygnusBus to see them.
 
 const transport = sim.createTransport();   // Transport (kind 'sim'), give it to CygnusBus
 const runner = new RealtimeRunner(sim, realScheduler, { tickMs: 4, maxCatchUpMs: 100, speed: 1 });
@@ -25,6 +28,8 @@ await transport.open();
 `sim.slotPlacements[slotId]` → `{ nodeId, channel?, shaftId? }` tells where each slot lives.
 Frame timestamps follow the scheduler clock (`sim.hostTimeOffset` is kept by the runner).
 In tests use `ManualScheduler` with the runner, or call `sim.advance(ms)` directly.
+Host ↔ simulator integration tests live in `test/integration/`; `harness.ts` `connect(sim)` gives a
+`CygnusBus` on the same clock with `runFor(ms)`, `settle(promise)`, `until(cond)`, `discover()`, `dev(nodeId)`.
 
 ## Simulator panel (control API)
 
@@ -70,6 +75,9 @@ enabled, unsaved, faults {active,sticky,warn}, fw, supplyV, supplyA, streaming, 
 
 - `OledNode`: `framebuffer` (1024 B, SSD1306 pages, bit 0 = top), `pixel(x, y)`,
   `frameVersion` (redraw counter), `brightness`, `currentPage`, `textLines()`.
+- `LegacyCyncoderNode` (Cyncoder v3 / FRC protocol, PROTOCOL §11): `uid32`, `version`, `applied` (commands
+  that matched its UID), `blinking`; `inject(id, 'hardware')` = sensor fault. Snapshot reports model 0,
+  modelKey `cyncoder_v3`, devType 10. It never answers CyCAN frames.
 - `Servo16Node.pulse(ch)`, `EscNode.fetTemperature`, `EscNode.pwmIn.pulseUs` (RC input),
   `GyroNode.trueBias`, `SocRegNode.brownoutCount`, `PdhLargeNode.channel(n)` (PowerFeed).
 

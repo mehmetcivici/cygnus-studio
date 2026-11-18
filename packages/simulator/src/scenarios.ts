@@ -1,8 +1,9 @@
-import { DevType, Model, NUM_UNASSIGNED, decodeName, encodeName, getModel, type Text } from '@cygnus/protocol';
+import { CYNCODER_V3_DEF, DevType, Model, NUM_UNASSIGNED, decodeName, encodeName, getModel, type Text } from '@cygnus/protocol';
 import { templates as vehicleTemplates, type VehicleSlot, type VehicleTemplate } from '@cygnus/vehicles';
 import { CyncoderNode } from './devices/cyncoder';
 import { EscNode } from './devices/esc';
 import { GyroNode } from './devices/gyro';
+import { LegacyCyncoderNode } from './devices/legacy-cyncoder';
 import { OledNode, UsbCanNode } from './devices/oled';
 import { PdhLargeNode, PdhSmallNode, SocRegNode } from './devices/power';
 import { SealedServoNode } from './devices/sealed-servo';
@@ -64,6 +65,9 @@ export class ScenarioBuilder {
     const out: SimNodeOptions = { id: o.id, uid96: this.sim.rng.bytes(12), num };
     if (this.assigned && o.name) out.name = fitName(o.name);
     if (this.assigned && o.params) out.params = o.params;
+    // A classic-only bus (roboRIO, MCP2515) needs boards in classic mode, or their FD stream
+    // and firmware frames would be destroyed (PROTOCOL §1).
+    if (!this.sim.bus.fd) out.params = { ...out.params, 'can.data_bitrate': 0 };
     if (o.feed) out.feed = o.feed;
     return out;
   }
@@ -88,6 +92,14 @@ export class ScenarioBuilder {
   encoder(o: { id: string; shaft: Shaft | null; ratio?: number; mountRot?: number; num?: number; name?: string; params?: Record<string, number> }): CyncoderNode {
     const mountRot = o.mountRot ?? this.sim.rng.next();
     return this.sim.addNode(new CyncoderNode({ ...this.opts(DevType.ENCODER, o), shaft: o.shaft, ratio: o.ratio ?? 1, mountRot }));
+  }
+
+  /** Cyncoder 1.4 on the legacy v3 firmware: its own number space (DEVTYPE 10, CLASS 0/1), no CyCAN identity. */
+  legacyEncoder(o: { id: string; shaft: Shaft | null; num: number; version?: 0 | 2 | 3; mountRot?: number }): LegacyCyncoderNode {
+    const mountRot = o.mountRot ?? this.sim.rng.next();
+    return this.sim.addNode(
+      new LegacyCyncoderNode({ id: o.id, uid96: this.sim.rng.bytes(12), num: o.num, shaft: o.shaft, mountRot, ...(o.version !== undefined ? { version: o.version } : {}) }),
+    );
   }
 
   gyro(o: { id: string; num?: number; name?: string }): GyroNode {
@@ -210,7 +222,21 @@ function allDevices(o: ScenarioOptions): Simulation {
   b.soc({ id: 'soc_reg', num: 3, name: 'SoC 12V', feed: pdh.channel(5) });
   b.oled({ id: 'oled', num: 1, name: 'Ekran', params: { 'watch.1.devtype': DevType.MOTOR_CONTROLLER, 'watch.1.num': 2 } });
   b.usbCan({ id: 'usbcan', num: 2, name: 'USB-CAN' });
+  // A board still on the legacy FRC firmware, sharing the bus (and the small motor's shaft).
+  b.legacyEncoder({ id: 'cyncoder_v3', shaft: small, num: 3 });
   sim.setFeed('soc_reg', pdh.channel(5));
+  return sim;
+}
+
+function legacyCyncoder(o: ScenarioOptions): Simulation {
+  // FRC bus: classic CAN unless asked otherwise, as on a roboRIO.
+  const sim = new Simulation({ seed: o.seed ?? 5, fd: o.fd ?? false, label: { tr: 'Eski Cyncoder', en: 'Legacy Cyncoder' } });
+  const b = new ScenarioBuilder(sim, o.assigned ?? true);
+  const w = sim.world;
+  const sh = (id: string, label: string): Shaft => w.addShaft({ id, label, inertia: 0.002, viscous: 1e-4, coulomb: 0.02 });
+  b.legacyEncoder({ id: 'v3-a', shaft: sh('shaft-a', 'Eski A / Legacy A'), num: 1 });
+  b.legacyEncoder({ id: 'v3-b', shaft: sh('shaft-b', 'Eski B / Legacy B'), num: 2 });
+  b.encoder({ id: 'cycan', shaft: sh('shaft-c', 'CyCAN'), num: 1, name: 'Cyncoder 1.5' });
   return sim;
 }
 
@@ -243,10 +269,20 @@ const HAND: Array<ScenarioInfo & { build: (o: ScenarioOptions) => Simulation }> 
     build: factoryFresh,
   },
   {
+    id: 'legacy.cyncoder',
+    category: 'demo',
+    name: { tr: 'Eski Cyncoder', en: 'Legacy Cyncoder' },
+    description: {
+      tr: 'Eski FRC protokolündeki iki Cyncoder 1.4 ve CyCAN konuşan bir Cyncoder aynı hatta.',
+      en: 'Two Cyncoder 1.4 boards on the legacy FRC protocol and one CyCAN Cyncoder on one bus.',
+    },
+    build: legacyCyncoder,
+  },
+  {
     id: 'all.devices',
     category: 'demo',
     name: { tr: 'Tüm cihazlar', en: 'All devices' },
-    description: { tr: 'Her modelden bir kart.', en: 'One board of every model.' },
+    description: { tr: 'Her modelden bir kart ve eski protokolde bir Cyncoder.', en: 'One board of every model and a Cyncoder on the legacy protocol.' },
     build: allDevices,
   },
 ];
@@ -404,8 +440,8 @@ export function buildVehicleScenario(template: VehicleTemplate, o: ScenarioOptio
         const encSlot = slots.find((q) => q.role === 'steerEncoder' && (q.group === s.group || !s.group));
         const gear = swerve ? 150 / 7 : 50;
         const extra: Record<string, number> = {};
+        // Gains for the swerve steer come from the template presets (the same the vehicle wizard writes).
         if (encSlot) Object.assign(extra, { 'fb.source': 2, 'fb.remote_num': encSlot.suggestedNum ?? 1, 'fb.remote_ratio': 1 });
-        if (swerve) Object.assign(extra, { 'pos.kp': 12, 'pos.kd': 0.2 });
         const esc = b.esc({
           id: s.id,
           model: Model.ESC_20A,
@@ -622,5 +658,6 @@ export function createScenario(id: string, o: ScenarioOptions = {}): Simulation 
 
 /** Catalog name of a node's model, for panels that list boards. */
 export function modelName(node: SimNode): Text {
+  if (node instanceof LegacyCyncoderNode) return CYNCODER_V3_DEF.name;
   return getModel(node.def.model)?.name ?? { tr: node.def.key, en: node.def.key };
 }

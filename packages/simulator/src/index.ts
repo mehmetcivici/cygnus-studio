@@ -36,6 +36,7 @@ export { SimTransport } from './transport';
 export { RealtimeRunner, type RealtimeRunnerOptions } from './runner';
 export { EscNode, type EscOptions } from './devices/esc';
 export { CyncoderNode, type CyncoderOptions, type MagnetCondition } from './devices/cyncoder';
+export { LegacyCyncoderNode, type LegacyCyncoderOptions } from './devices/legacy-cyncoder';
 export { GyroNode, type GyroOptions } from './devices/gyro';
 export { Servo16Node, type Servo16Options, type ChannelSink } from './devices/servo16';
 export { SealedServoNode, type SealedServoOptions } from './devices/sealed-servo';

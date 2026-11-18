@@ -47,6 +47,21 @@ describe('templates', () => {
     expect(s.find((x) => x.id === 'fl.steer')?.presets).toMatchObject({ 'fb.source': 2 });
   });
 
+  it('slots sharing a DEVTYPE never suggest the same number', () => {
+    const rov = tpl('underwater.rov8').slots;
+    const power = rov.find((x) => x.role === 'power')?.suggestedNum;
+    const soc = rov.find((x) => x.role === 'computePower')?.suggestedNum;
+    expect(power).toBeDefined();
+    expect(soc).toBeDefined();
+    expect(power).not.toBe(soc);
+    const arm = tpl('arm.arm4').slots;
+    const servoNums = arm.filter((x) => x.role === 'joint' || x.role === 'gripper').map((x) => x.suggestedNum);
+    expect(new Set(servoNums).size).toBe(servoNums.length);
+    // validateTemplate reports a clash.
+    const bad = { ...tpl('underwater.rov8'), slots: rov.map((x) => (x.role === 'computePower' ? { ...x, suggestedNum: power } : x)) };
+    expect(validateTemplate(bad).some((i) => i.slotId === 'soc' && i.detail.includes('DEVTYPE 8'))).toBe(true);
+  });
+
   it('ROV horizontal thrusters sit at 45 degrees', () => {
     const h = tpl('underwater.rov6').slots.filter((s) => s.id.startsWith('thr.h'));
     expect(h.map((s) => s.headingDeg).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([45, 45, 315, 315]);

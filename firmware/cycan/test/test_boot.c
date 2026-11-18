@@ -323,6 +323,17 @@ void test_boot_presence(void)
     rf = fake_last(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_COMMAND_RSP);
     CHECK(rf != NULL && cycan_dec_command_rsp(rf->data, rf->len, &cr) && cr.status == CYCAN_CMDST_OK);
     CHECK_EQ(fk.app_starts, 2);
+
+    /* PROTOCOL 9: once BEGIN erased the image, the heartbeat reports 0.0.0. */
+    {
+        cycan_boot_cfg_t cfg = bl.cfg;
+        cycan_boot_init(&bl, &cfg, &fk.boot_hal, now);
+    }
+    begin((uint32_t)sizeof image, cycan_crc32(image, sizeof image));
+    fake_clear(&fk);
+    run_boot_ms(&bl, &now, 600);
+    rf = fake_last(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_HEARTBEAT);
+    CHECK(rf != NULL && cycan_dec_heartbeat(rf->data, rf->len, &hb) && hb.fw_major == 0 && hb.fw_minor == 0 && hb.fw_patch == 0);
 }
 
 void test_boot_unassigned_silent(void)

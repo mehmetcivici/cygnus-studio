@@ -54,7 +54,7 @@ interface VehicleConfig {
 }
 ```
 
-Paket ayrıca şunları sağlar: `templates` listesi, `getTemplate(id)`, `validateTemplate`, `validateConfig(template, config)` (eksik zorunlu yuva, aynı kartın iki yuvaya atanması, uyumsuz model), `planApply(template, config, devices)` → uygulanacak değişiklik listesi (numara ataması, ad, parametre hazır ayarları) — saf fonksiyon, yan etkisiz.
+Paket ayrıca şunları sağlar: `templates` listesi, `getTemplate(id)`, `validateTemplate`, `validateConfig(template, config)` (eksik zorunlu yuva, aynı kartın iki yuvaya atanması, uyumsuz model), `planApply(template, config, devices)` → uygulanacak değişiklik listesi (numara ataması, ad, parametre hazır ayarları) — saf fonksiyon, yan etkisiz. Planı host API'siyle uygulayan `applyPlan(bus, plan, { onStep, persist })`, hattaki kartları plan girdisine çeviren `planDevices(bus)` ve "elle çevir, bulsun" yardımcıları `detectMovedEncoder` / `detectTiltedGyro` de bu pakettedir.
 
 ## Şablonlar
 

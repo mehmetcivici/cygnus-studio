@@ -24,22 +24,30 @@ describe('conflicts and number assignment', () => {
     expect(r.bus.suggestNumber(2)).toBe(1);
     expect(r.bus.suggestNumber(7)).toBe(1);
 
+    // PROTOCOL §3.4: the lowest uid48 of the #5 group keeps the number, whichever board saw the
+    // conflict; the others move to the first free numbers first and the keeper is re-assigned last.
+    const keeper = a.uid48 < b.uid48 ? a : b;
+    const mover = keeper === a ? b : a;
+    const hex = (n: { uid48: number }): string => n.uid48.toString(16).padStart(12, '0');
     const plan = r.bus.planResolve();
-    const escTargets = plan.filter((s) => s.devType === 2).map((s) => s.to);
-    expect(escTargets).toEqual([1, 3]);
-    expect(plan.find((s) => s.devType === 7)?.to).toBe(1);
+    expect(plan[plan.length - 1]).toMatchObject({ uid48: hex(keeper), from: 5, to: 5 });
+    const moves = plan.slice(0, -1);
+    expect(moves.filter((s) => s.devType === 2).map((s) => s.to)).toEqual([1, 3]);
+    expect(moves.filter((s) => s.devType === 2).map((s) => s.uid48).sort()).toEqual([hex(mover), hex(fresh)].sort());
+    expect(moves.find((s) => s.devType === 7)?.to).toBe(1);
 
     const outcome = await settle(r.sched, r.bus.resolveAll({ persist: true }));
     expect(outcome.every((o) => o.ok)).toBe(true);
     await run(r.sched, 1200);
     expect(r.bus.unresolved).toEqual([]);
-    expect(winner.num).toBe(5);
-    expect(new Set([keep.num, loser.num, fresh.num])).toEqual(new Set([1, 2, 3]));
+    expect(keeper.num).toBe(5);
+    expect(winner.conflict || loser.conflict).toBe(false);
+    expect(new Set([keep.num, mover.num, fresh.num])).toEqual(new Set([1, 2, 3]));
     expect(enc.num).toBe(1);
     expect(fresh.persistedNum).not.toBeNull();
     expect(r.bus.suggestNumber(2)).toBe(4);
     // Resolved boards heartbeat again and the host reads their INFO pages.
-    await r.ready(loser);
+    await r.ready(mover);
   });
 
   it('refuses numbers that are taken or out of range', async () => {
