@@ -17,7 +17,8 @@ Sunum takvimindeki karşılığı: bu çalışma **Alfa** hedefini (Şub–Nis 2
 | I1 | Host ↔ simülatör bütünleştirme | Tamam |
 | U0, A1 | Arayüz temeli, uygulama çekirdeği, Hat ekranı | Tamam |
 | A2–A6 | Tuner, Cihaz, Araç, Grafik, CAN İzleyici, Firmware, Proje ekranları | Tamam |
-| Q1 | Bağımsız inceleme (3–4 ajan) ve düzeltme turu | **Yapılmadı** |
+| Q1 | Bağımsız inceleme (4 ajan, 86 bulgu, 5 kritik) | Tamam (raporlar oturumda: protokol, host-sim, uygulama, tasarim) |
+| Q2 | Düzeltme turu | **Sürüyor**: C kütüphanesi tamam; host, simülatör, çekirdek, ekranlar düzeltiliyor |
 | D1 | Canlı demo yayını, GitHub'a gönderim | **Yapılmadı** (repo bekleniyor) |
 
 Son doğrulama (2026-11-18): `npm run typecheck` temiz · 784 TypeScript testi · C kütüphanesi 31 test · `cygnus-link` 8 test · arayüz derlemesi hatasız.
