@@ -13,7 +13,7 @@ import {
   type ModelDef,
 } from '@cygnus/protocol';
 import type { BusFrame } from '../bus';
-import { NodeMode, SimNode, type SimNodeOptions } from '../node';
+import { CtrlResult, NodeMode, SimNode, type SimNodeOptions } from '../node';
 import { FONT5X7 } from './font5x7';
 
 export const OLED_WIDTH = 128;
@@ -97,17 +97,18 @@ export class OledNode extends SimNode {
     this.frameVersion++;
   }
 
-  protected override onCtrl(index: number, d: Uint8Array, len: number): boolean {
-    if (index !== 0 || len < 2) return false;
+  /** Text moves nothing, so it never needs arming: every valid frame counts as neutral. */
+  protected override onCtrl(index: number, d: Uint8Array, len: number): CtrlResult {
+    if (index !== 0 || len < 2) return CtrlResult.INVALID;
     const line = d[0] ?? 0;
     const col = d[1] ?? 0;
-    if (line >= ROWS) return false;
+    if (line >= ROWS) return CtrlResult.INVALID;
     for (let i = 0; i < 6 && 2 + i < len; i++) {
       const c = d[2 + i] ?? 0;
       if (c === 0 || col + i >= COLS) continue;
       this.text[line * COLS + col + i] = c >= 0x20 && c < 0x7f ? c : 0x3f;
     }
-    return true;
+    return CtrlResult.NEUTRAL;
   }
 
   protected override onPeerFrame(f: BusFrame): void {

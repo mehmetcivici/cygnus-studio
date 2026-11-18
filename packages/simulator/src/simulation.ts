@@ -16,6 +16,8 @@ export interface SimulationOptions {
 
 /** A board that supplies other boards (PDH, regulator). */
 export interface PowerDistributor {
+  /** Feeds this board supplies (their `load` is summed afresh every step). */
+  readonly feeds: readonly PowerFeed[];
   /** Sets the voltages of the feeds it owns from its own supply. Called after the battery update. */
   distribute(dtS: number): void;
 }
@@ -165,9 +167,16 @@ export class Simulation implements SimContext {
     const bat = w.battery;
     bat.feed.load = 0;
     const order = this.powerOrder;
+    // Every feed starts the step at zero, including distributor outputs nothing on the bus
+    // is attached to (PWM ESCs on a PDH channel): loads must not pile up across steps.
     for (let i = 0; i < order.length; i++) {
-      const f = order[i]!.feed;
-      if (f) f.load = 0;
+      const n = order[i]!;
+      if (n.feed) n.feed.load = 0;
+      if (isDistributor(n)) for (const f of n.feeds) f.load = 0;
+    }
+    for (let i = 0; i < w.pwmEscs.length; i++) {
+      const e = w.pwmEscs[i]!;
+      if (e.feed) e.feed.load = 0;
     }
     for (let i = 0; i < w.pwmEscs.length; i++) {
       const e = w.pwmEscs[i]!;

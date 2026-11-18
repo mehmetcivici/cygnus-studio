@@ -118,6 +118,7 @@ describe('Servo16', () => {
     const host = new Host(sim);
     host.run(400);
     const A = { devType: DevType.SERVO_CONTROLLER, num: 1 };
+    host.arm(A, 0);
     for (let t = 0; t < 300; t += 20) {
       host.send(encodeCtrlServo(A, { index: 0, pulsesUs: [2500, 1700, 2000, 0] }));
       host.run(20);
@@ -146,6 +147,7 @@ describe('Sealed servo', () => {
     const { host, sim } = all();
     const s = sim.node('sealed_servo') as SealedServoNode;
     const A = { devType: DevType.SERVO_CONTROLLER, num: 2 };
+    host.arm(A);
     const cmd = (deg: number, ms: number) => {
       for (let t = 0; t < ms; t += 10) {
         host.send(encodeCtrlSet(A, { mode: SealedServoMode.POSITION, flags: 0, value: deg }));
@@ -176,6 +178,7 @@ describe('Power boards', () => {
     const pdh = sim.node('pdh_large') as PdhLargeNode;
     const esc = sim.node('esc80a') as EscNode;
     const A = { devType: DevType.MOTOR_CONTROLLER, num: 2 };
+    host.arm(A);
     for (let t = 0; t < 400; t += 10) {
       host.send(encodeCtrlSet(A, { mode: EscMode.DUTY, flags: 0, value: 0.6 }));
       host.run(10);
@@ -200,6 +203,7 @@ describe('Power boards', () => {
     const pdh = sim.node('pdh_large') as PdhLargeNode;
     pdh.fuses[1]!.ratingA = 6;
     sim.world.setJammed('flywheel', true);
+    host.arm({ devType: DevType.MOTOR_CONTROLLER, num: 2 });
     for (let t = 0; t < 3000 && pdh.signalValues()['fuse.mask'] === 0; t += 10) {
       host.send(encodeCtrlSet({ devType: DevType.MOTOR_CONTROLLER, num: 2 }, { mode: EscMode.CURRENT, flags: 0, value: 40 }));
       host.run(10);

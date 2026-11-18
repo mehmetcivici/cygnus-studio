@@ -4,7 +4,9 @@ import {
   CommandStatus,
   CommonPid,
   DataBitrate,
+  DevType,
   DeviceState,
+  ENTER_BOOTLOADER_INTENT,
   EnumFilter,
   FaultBit,
   FwReq,
@@ -15,10 +17,14 @@ import {
   NAME_BYTES,
   NUM_MAX,
   NUM_MIN,
+  NUM_BROADCAST,
   NUM_UNASSIGNED,
   PROTO_MAJOR,
   PROTO_MINOR,
   ParamReq,
+  RECOVERY_STAY_MAGIC,
+  RECOVERY_WINDOW_MS,
+  STREAM_MAX_SLOTS_CLASSIC,
   STREAM_SID_CLEAR,
   STREAM_SLOTS,
   StreamReq,
@@ -26,8 +32,10 @@ import {
   SysRsp,
   Timing,
   acceptsFrame,
+  CYFW_HEADER_SIZE,
   crc32,
   decodeAssignId,
+  decodeCyfwHeader,
   decodeCommand,
   decodeIdentify,
   decodeName,
@@ -41,6 +49,7 @@ import {
   encodeParamValue,
   fdRoundUp,
   getModel,
+  isValidFdLength,
   idClass,
   idDevType,
   idIndex,
@@ -53,7 +62,6 @@ import {
   readParamValue,
   statusPeriodPid,
   uid96ToInfoPages,
-  validateCyfw,
   writeF32,
   writeU16,
   encodeName,
@@ -90,9 +98,18 @@ export type InjectionKind =
   | 'paramCrc'
   | 'hardware'
   | 'selfTestFail'
-  | 'flashError';
+  | 'flashError'
+  | 'brokenApp';
 
-export const COMMON_INJECTIONS: readonly InjectionKind[] = ['paramCrc', 'hardware', 'selfTestFail', 'flashError'];
+export const COMMON_INJECTIONS: readonly InjectionKind[] = ['paramCrc', 'hardware', 'selfTestFail', 'flashError', 'brokenApp'];
+
+/**
+ * What a board made of a CTRL frame (same contract as the C library's `ctrl` callback).
+ * INVALID frames are ignored altogether; DRIVE is applied only once the index is armed by a
+ * NEUTRAL command (PROTOCOL §7, neutral-first rule).
+ */
+export const CtrlResult = { INVALID: 0, NEUTRAL: 1, DRIVE: 2 } as const;
+export type CtrlResult = (typeof CtrlResult)[keyof typeof CtrlResult];
 
 export interface FirmwareVersion {
   major: number;
@@ -147,11 +164,15 @@ export interface NodeSnapshot {
 }
 
 const BITRATE_BPS = [0, 2_000_000, 5_000_000, 8_000_000] as const;
-const BOOT_MS = 250;
-const BOOTLOADER_BOOT_MS = 120;
+/** Bootloader start-up when it stays (ENTER_BOOTLOADER, no valid image): no recovery window. */
+const BOOTLOADER_BOOT_MS = 10;
 const SELF_TEST_MS = 300;
 const FW_MAX_SIZE = 1 << 20;
 const FW_VERIFY_MS = 40;
+/** Verified image until the application starts (FW_REQ answers BUSY meanwhile). */
+const FW_START_DELAY_MS = 5;
+/** Signed `.cyfw`: a 64-byte signature follows the payload (PROTOCOL §9.1, flags bit0). */
+const CYFW_SIGNATURE_SIZE = 64;
 /** Remote encoder status older than this counts as lost. */
 export const PEER_TIMEOUT_MS = 100;
 
@@ -188,6 +209,8 @@ export abstract class SimNode implements BusEndpoint {
   private flashCorrupt = false;
   private flashWriteFails = false;
   private selfTestMask = 0;
+  /** The installed image passes its CRC but hangs before CAN comes up (recovery-window demo). */
+  private appBroken = false;
 
   // Runtime state.
   mode: NodeMode = NodeMode.OFF;
@@ -196,6 +219,12 @@ export abstract class SimNode implements BusEndpoint {
   conflict = false;
   private bootDoneAt = 0;
   private bootIntoLoader = false;
+  /** Bootloader is in its power-up recovery window (PROTOCOL §9.0). */
+  private recoveryWindow = false;
+  /** The application hung at start-up (broken image): the board stays silent until power-cycled. */
+  private hung = false;
+  /** Next heartbeat reports state BOOT (first one after the application starts, PROTOCOL §4.1). */
+  private bootHeartbeat = false;
   private identifyUntil = -1;
   private estop = false;
   protected faultActive = 0;
@@ -213,6 +242,11 @@ export abstract class SimNode implements BusEndpoint {
   private clearStickyAt = -1;
   private ctrlSeen = false;
   private lastCtrlMs = 0;
+  /** Bit per CTRL index: a neutral command was seen since the last neutral-forcing event. */
+  private ctrlArmed = 0;
+  private inNeutral = false;
+  /** Time ESTOP was last latched: a CLEAR_ESTOP in the same processing turn loses (PROTOCOL §4.7). */
+  private estopAt = -1;
   private canErr = false;
 
   // Status frames.
@@ -221,6 +255,9 @@ export abstract class SimNode implements BusEndpoint {
   private readonly statusNext: number[];
 
   // Stream.
+  /** Slot → configured sid (-1 = empty). */
+  private readonly streamSid = new Int32Array(STREAM_SLOTS).fill(-1);
+  /** Slot → signal index; -1 for a sid the board does not know (streams NaN, like the C library). */
   private readonly streamSig = new Int32Array(STREAM_SLOTS).fill(-1);
   private streamCount = 0;
   private streamPeriod = 0;
@@ -235,14 +272,21 @@ export abstract class SimNode implements BusEndpoint {
   protected streamGranularity = 10;
 
   // Firmware update (bootloader).
-  private fwPhase: 'idle' | 'erasing' | 'receiving' | 'verifying' = 'idle';
+  /**
+   * header: BEGIN accepted, the 64-byte header is collected in RAM and nothing is erased yet ·
+   * erasing (BUSY) · receiving · verifying and starting (`END` given; BUSY to every FW_REQ).
+   */
+  private fwPhase: 'idle' | 'header' | 'erasing' | 'receiving' | 'verifying' | 'starting' = 'idle';
   private fwBuf: Uint8Array | null = null;
   private fwSize = 0;
   private fwCrc = 0;
   private fwNext = 0;
   private fwSinceAck = 0;
   private fwPhaseDoneAt = 0;
-  private fwBadOffsetSent = false;
+  /** Out-of-order DATA frames since the last BAD_OFFSET; one BAD_OFFSET per window of them. */
+  private fwBadCount = 0;
+  /** Whether a pending start (REBOOT answered, verified image) may still run. */
+  private fwStartAt = -1;
 
   protected readonly tx = new Uint8Array(64);
   private readonly pCtrlTimeout: number;
@@ -260,7 +304,8 @@ export abstract class SimNode implements BusEndpoint {
     this.uid16 = u.uid16;
     this.hash10 = u.hash10;
     this.enumDelay = u.enumDelayMs;
-    this.hbPhase = this.uid48 % (Timing.HEARTBEAT_PHASE_MAX_MS + 1);
+    // Same phase rule as the C library, so both send at the same instants.
+    this.hbPhase = this.uid16 % (Timing.HEARTBEAT_PHASE_MAX_MS + 1);
     this.hwRev = o.hwRev ?? 1;
     this.params = new ParamTable(def, o.params);
     this.sig = new Float64Array(def.signals.length);
@@ -296,11 +341,14 @@ export abstract class SimNode implements BusEndpoint {
   protected onAppStop(): void {}
   /** 1 kHz application step (sensors, control loops), runs whenever the app runs. */
   protected appTick(): void {}
-  /** CTRL frame for this board; return true if it was a valid command. */
-  protected onCtrl(_index: number, _data: Uint8Array, _len: number): boolean {
-    return false;
+  /**
+   * CTRL frame for this board. Classify it and apply it, except a DRIVE command while
+   * `armed` is false (the base class then ignores it: neutral-first rule, PROTOCOL §7).
+   */
+  protected onCtrl(_index: number, _data: Uint8Array, _len: number, _armed: boolean): CtrlResult {
+    return CtrlResult.INVALID;
   }
-  /** Actuator outputs to neutral (ESTOP, timeout, unassigned). */
+  /** Actuator outputs to neutral (ESTOP, timeout, fault, conflict, renumbering). */
   protected neutral(): void {}
   /** Frames other boards send (STATUS, HEARTBEAT…), for boards that listen to peers. */
   protected onPeerFrame(_f: BusFrame): void {}
@@ -353,20 +401,39 @@ export abstract class SimNode implements BusEndpoint {
     return this.params.ram[i] ?? 0;
   }
 
+  /** A new active fault forces the actuators neutral and disarms CTRL (PROTOCOL §7). */
   protected setFault(bit: number, on: boolean): void {
     const m = 1 << bit;
     if (on) {
+      const fresh = (this.faultActive & m) === 0;
       this.faultActive |= m;
       this.faultSticky |= m;
+      if (fresh && bit !== FaultBit.ESTOP) this.forceNeutral();
     } else this.faultActive &= ~m;
   }
 
+  /** Warnings are not sticky (same as the C library); CAN_ERR is, so a brief loss stays visible. */
   protected setWarn(bit: number, on: boolean): void {
     const m = 1 << bit;
     if (on) {
       this.faultWarn |= m;
-      this.faultSticky |= m;
+      if (bit === FaultBit.CAN_ERR) this.faultSticky |= m;
     } else this.faultWarn &= ~m;
+  }
+
+  /** Every neutral-forcing event: outputs neutral, watchdog off, every CTRL index disarmed. */
+  private forceNeutral(): void {
+    this.ctrlArmed = 0;
+    this.ctrlSeen = false;
+    if (this.inNeutral) return;
+    this.inNeutral = true; // neutral() may raise a fault, which lands here again
+    this.neutral();
+    this.inNeutral = false;
+  }
+
+  /** CTRL is accepted at all: running, assigned, not ESTOP-latched, no active fault. */
+  private get ctrlAllowed(): boolean {
+    return this.mode === NodeMode.APP && this.assigned && !this.estop && this.faultActive === 0;
   }
 
   protected hasFault(bit: number): boolean {
@@ -404,6 +471,11 @@ export abstract class SimNode implements BusEndpoint {
 
   get terminationOn(): boolean {
     return this.mode !== NodeMode.OFF && this.pTermination >= 0 && this.p(this.pTermination) !== 0;
+  }
+
+  /** Hangs at start-up: the installed image is broken (`brokenApp` injection). */
+  get hangs(): boolean {
+    return this.hung;
   }
 
   get state(): number {
@@ -449,6 +521,12 @@ export abstract class SimNode implements BusEndpoint {
     return BITRATE_BPS[this.dataBitrate as 0 | 1 | 2 | 3] || 2_000_000;
   }
 
+  /** `can.data_bitrate` from flash; classic when the model has no such setting or the store is corrupt. */
+  private storedDataBitrate(): number {
+    if (this.pDataBitrate < 0 || this.flashCorrupt) return DataBitrate.CLASSIC;
+    return this.params.flash[this.pDataBitrate] ?? DataBitrate.CLASSIC;
+  }
+
   protected get addr(): { devType: number; num: number } {
     return { devType: this.def.devType, num: this.num };
   }
@@ -469,14 +547,20 @@ export abstract class SimNode implements BusEndpoint {
     if (this.mode === NodeMode.APP) this.onAppStop();
     this.mode = NodeMode.OFF;
     this.estop = false;
+    this.estopAt = -1;
     this.streamOn = false;
     this.enumAt = -1;
     this.longCmd = -1;
     this.selfTestAt = -1;
     this.identifyUntil = -1;
     this.ctrlSeen = false;
+    this.ctrlArmed = 0;
+    this.recoveryWindow = false;
+    this.hung = false;
+    this.bootHeartbeat = false;
     this.fwPhase = 'idle';
     this.fwBuf = null;
+    this.fwStartAt = -1;
   }
 
   /** Reboot (command, power-up). RAM is reloaded from flash. */
@@ -485,40 +569,70 @@ export abstract class SimNode implements BusEndpoint {
     this.boot(intoBootloader);
   }
 
+  /**
+   * Power-up runs the bootloader first. With a valid image and no request to stay, it listens
+   * for the recovery beacon for RECOVERY_WINDOW_MS (PROTOCOL §9.0) and then starts the app.
+   */
   private boot(intoBootloader: boolean): void {
     this.mode = NodeMode.BOOT;
     this.bootIntoLoader = intoBootloader || !this.appValid;
-    this.bootDoneAt = this.now + (this.bootIntoLoader ? BOOTLOADER_BOOT_MS : BOOT_MS);
+    this.recoveryWindow = !this.bootIntoLoader;
+    this.bootDoneAt = this.now + (this.bootIntoLoader ? BOOTLOADER_BOOT_MS : RECOVERY_WINDOW_MS);
   }
 
   private finishBoot(): void {
+    this.recoveryWindow = false;
+    if (!this.bootIntoLoader && this.appBroken) {
+      // CRC-valid image that crashes before CAN comes up: silent until the next power-up.
+      this.hung = true;
+      this.bootDoneAt = Number.POSITIVE_INFINITY;
+      return;
+    }
+    if (this.flashCorrupt) {
+      // Settings store failed its CRC (number, name and parameters live there, as in the C
+      // library): the board comes up unassigned on catalog defaults, PARAM_CRC active, so it
+      // cannot be driven under its old number with possibly wrong settings.
+      this.flashNum = NUM_UNASSIGNED;
+      this.flashName.fill(0);
+      this.params.resetFlash();
+    }
     this.num = this.flashNum;
     this.conflict = false;
     this.name.set(this.flashName);
     this.faultActive = 0;
     this.faultWarn = 0;
-    if (this.flashCorrupt) {
-      // Settings memory failed its CRC: run on catalog defaults until the host saves again.
-      this.params.resetFlash();
-      this.params.loadDefaults();
-      this.flashCorrupt = false;
-      this.setFault(FaultBit.PARAM_CRC, true);
-    } else {
-      this.params.loadFlash();
-    }
-    this.dataBitrate = this.pDataBitrate >= 0 ? this.p(this.pDataBitrate) : DataBitrate.M2;
+    this.params.loadFlash();
+    // can.data_bitrate is reboot-required: the value loaded now stays in effect. The bootloader
+    // reads the store itself and falls back on classic when it is corrupt (PROTOCOL §9).
+    if (this.bootIntoLoader) this.dataBitrate = this.storedDataBitrate();
+    else this.dataBitrate = this.pDataBitrate >= 0 ? this.p(this.pDataBitrate) : DataBitrate.CLASSIC;
     this.hbNext = this.now + this.hbPhase;
     for (let k = 0; k < this.statusNext.length; k++) this.statusNext[k] = this.now + ((this.uid48 >>> 3) + k * 7) % 10;
+    this.streamSid.fill(-1);
     this.streamSig.fill(-1);
     this.streamCount = 0;
-    if (this.hwFault) this.setFault(FaultBit.HARDWARE, true);
+    this.ctrlArmed = 0;
+    this.ctrlSeen = false;
     if (this.bootIntoLoader) {
       this.mode = NodeMode.BOOTLOADER;
       this.fwPhase = 'idle';
-    } else {
-      this.mode = NodeMode.APP;
-      this.onAppStart();
+      this.fwStartAt = -1;
+      return;
     }
+    this.mode = NodeMode.APP;
+    this.bootHeartbeat = this.assigned;
+    if (this.flashCorrupt) this.setFault(FaultBit.PARAM_CRC, true);
+    if (this.hwFault) this.setFault(FaultBit.HARDWARE, true);
+    this.onAppStart();
+  }
+
+  /** PROTOCOL §9.0: the one frame a bootloader in its recovery window acts on. */
+  private isRecoveryBeacon(f: BusFrame): boolean {
+    const id = f.id;
+    if (idClass(id) !== Cls.SYS_REQ || idIndex(id) !== SysReq.COMMAND) return false;
+    if (idDevType(id) !== DevType.BROADCAST || idNum(id) !== NUM_BROADCAST) return false;
+    const m = decodeCommand(f.data.subarray(0, f.len));
+    return m !== null && m.cmd === Command.ENTER_BOOTLOADER && m.arg >>> 0 === RECOVERY_STAY_MAGIC;
   }
 
   /** One simulation millisecond. */
@@ -528,12 +642,13 @@ export abstract class SimNode implements BusEndpoint {
     if (this.mode === NodeMode.BOOT) {
       if (now < this.bootDoneAt) return;
       this.finishBoot();
+      if (this.mode === NodeMode.BOOT) return;
     }
     if (this.identifyUntil >= 0 && now >= this.identifyUntil) this.identifyUntil = -1;
     const shorted = this.ctx.bus.shorted;
     if (shorted !== this.canErr) {
       this.canErr = shorted;
-      this.setFault(FaultBit.CAN_ERR, shorted);
+      this.setWarn(FaultBit.CAN_ERR, shorted);
     }
     if (!this.speaksCyCan) {
       this.appTick();
@@ -545,7 +660,7 @@ export abstract class SimNode implements BusEndpoint {
     }
     if (this.mode === NodeMode.BOOTLOADER) {
       this.fwTick();
-      this.heartbeatTick();
+      if (this.mode === NodeMode.BOOTLOADER) this.heartbeatTick();
       return;
     }
     if (this.selfTestAt >= 0 && now >= this.selfTestAt) {
@@ -555,12 +670,11 @@ export abstract class SimNode implements BusEndpoint {
     this.appTick();
     if (this.clearStickyAt >= 0 && now >= this.clearStickyAt) {
       this.clearStickyAt = -1;
-      this.faultSticky &= this.faultActive | this.faultWarn;
+      this.faultSticky &= this.faultActive;
     }
     if (this.actuator && this.ctrlSeen && now - this.lastCtrlMs > this.p(this.pCtrlTimeout)) {
-      this.ctrlSeen = false;
       this.setWarn(FaultBit.CTRL_TIMEOUT, true);
-      this.neutral();
+      this.forceNeutral();
     }
     if (this.mode !== NodeMode.APP) return; // an action may have rebooted the board
     this.heartbeatTick();
@@ -572,7 +686,15 @@ export abstract class SimNode implements BusEndpoint {
   // ---- receive ---------------------------------------------------------------------------
 
   receive(f: BusFrame): void {
-    if (this.mode === NodeMode.OFF || this.mode === NodeMode.BOOT) return;
+    if (this.mode === NodeMode.OFF) return;
+    if (this.mode === NodeMode.BOOT) {
+      if (this.recoveryWindow && this.speaksCyCan && this.isRecoveryBeacon(f)) {
+        this.bootIntoLoader = true;
+        this.finishBoot();
+        this.hbNext = this.now; // announce the bootloader right away
+      }
+      return;
+    }
     const id = f.id;
     if (idMfr(id) !== MFR) return;
     const cls = idClass(id);
@@ -589,14 +711,10 @@ export abstract class SimNode implements BusEndpoint {
     const open = this.assigned;
     switch (cls) {
       case Cls.SYS_REQ:
-        this.onSysReq(index, d, len, open);
+        this.onSysReq(index, d, len, open, idNum(id) === NUM_BROADCAST);
         return;
       case Cls.CTRL:
-        if (open && this.mode === NodeMode.APP && !this.estop && this.onCtrl(index, d, len)) {
-          this.lastCtrlMs = this.now;
-          this.ctrlSeen = true;
-          if (this.faultWarn & (1 << FaultBit.CTRL_TIMEOUT)) this.setWarn(FaultBit.CTRL_TIMEOUT, false);
-        }
+        this.onCtrlFrame(id, index, d, len);
         return;
       case Cls.PARAM_REQ:
         if (open && this.mode === NodeMode.APP) this.onParamReq(index, d, len);
@@ -605,13 +723,33 @@ export abstract class SimNode implements BusEndpoint {
         if (open && this.mode === NodeMode.APP) this.onStreamReq(index, d, len);
         return;
       case Cls.FW_REQ:
-        if (open) this.onFwReq(index, d, len);
+        if (!open) return;
+        if (this.mode === NodeMode.APP) return this.fwAck(FwStatus.WRONG_STATE, 0);
+        // The bootloader takes FW frames only at its own number: a broadcast would reflash
+        // every board sitting in its bootloader at once.
+        if (idNum(id) === this.num) this.onFwReq(index, d, len);
         return;
     }
   }
 
+  private onCtrlFrame(id: number, index: number, d: Uint8Array, len: number): void {
+    // PROTOCOL §7: CTRL is addressed to one board; both broadcast forms are ignored.
+    if (idNum(id) === NUM_BROADCAST || idDevType(id) === DevType.BROADCAST) return;
+    if (!this.ctrlAllowed) return;
+    const bit = 1 << index;
+    const armed = (this.ctrlArmed & bit) !== 0;
+    const r = this.onCtrl(index, d, len, armed);
+    // Only valid frames feed the watchdog; a drive command before the neutral one is ignored.
+    if (r === CtrlResult.INVALID || (r === CtrlResult.DRIVE && !armed)) return;
+    if (!this.ctrlAllowed) return; // applying it raised a fault
+    if (r === CtrlResult.NEUTRAL) this.ctrlArmed |= bit;
+    this.lastCtrlMs = this.now;
+    this.ctrlSeen = true;
+    if (this.faultWarn & (1 << FaultBit.CTRL_TIMEOUT)) this.setWarn(FaultBit.CTRL_TIMEOUT, false);
+  }
+
   private checkConflict(f: BusFrame): void {
-    if (!this.assigned || idDevType(f.id) !== this.def.devType || idNum(f.id) !== this.num || f.len < 5) return;
+    if (!this.assigned || idDevType(f.id) !== this.def.devType || idNum(f.id) !== this.num || f.len < 8) return;
     if (readU16(f.data, 3) !== this.uid16) this.enterConflict();
   }
 
@@ -626,13 +764,13 @@ export abstract class SimNode implements BusEndpoint {
   private enterConflict(): void {
     this.conflict = true;
     this.streamOn = false;
-    this.neutral();
+    this.forceNeutral();
     // Announce it so every board on this number falls silent, whatever the boot order.
     this.enumAt = this.now + this.rng.int(21);
     this.enumRetried = false;
   }
 
-  private onSysReq(index: number, d: Uint8Array, len: number, open: boolean): void {
+  private onSysReq(index: number, d: Uint8Array, len: number, open: boolean, broadcast: boolean): void {
     switch (index) {
       case SysReq.ENUM_REQ: {
         if (len < 1) return;
@@ -646,9 +784,20 @@ export abstract class SimNode implements BusEndpoint {
       case SysReq.ASSIGN_ID: {
         const m = decodeAssignId(d.subarray(0, len));
         if (!m || m.uid48 !== this.uid48 || m.newNum < NUM_MIN || m.newNum > NUM_UNASSIGNED) return;
+        // A persistent assignment erases flash, which stalls a single-bank MCU (and a motor's
+        // commutation): refused while driving, without confirmation (same as the C library).
+        if (m.persist && this.mode === NodeMode.APP && this.isEnabled()) return;
+        const wasOpen = this.assigned;
+        const old = this.num;
         this.num = m.newNum;
         if (m.persist) this.flashNum = m.newNum;
+        // An active board changing its address loses its controller: it stops driving and streaming.
+        if (wasOpen && old !== m.newNum) {
+          this.streamOn = false;
+          this.forceNeutral();
+        }
         this.conflict = false;
+        this.bootHeartbeat = false;
         // The confirmation below replaces any reply or conflict announcement still pending.
         this.enumAt = -1;
         this.hbNext = this.now + this.hbPhase;
@@ -684,7 +833,7 @@ export abstract class SimNode implements BusEndpoint {
       }
       case SysReq.COMMAND: {
         const m = decodeCommand(d.subarray(0, len));
-        if (m) this.onCommand(m.cmd, m.arg);
+        if (m) this.onCommand(m.cmd, m.arg >>> 0, broadcast);
         return;
       }
       case SysReq.FAULT_REQ:
@@ -703,13 +852,19 @@ export abstract class SimNode implements BusEndpoint {
   }
 
   private latchEstop(): void {
-    if (this.mode === NodeMode.OFF || this.mode === NodeMode.BOOT) return;
-    this.estop = true;
-    this.setFault(FaultBit.ESTOP, true);
-    this.ctrlSeen = false;
-    // neutral() also cancels any running model action; the host learns it failed.
-    this.neutral();
-    if (this.longCmd >= 0x40) this.completeCommand(this.longCmd, CommandStatus.FAILED, 0);
+    if (this.mode !== NodeMode.APP) return;
+    this.estopAt = this.now;
+    const pending = this.longCmd;
+    this.longCmd = -1;
+    this.selfTestAt = -1;
+    if (!this.estop) {
+      this.estop = true;
+      this.setFault(FaultBit.ESTOP, true);
+      // neutral() also cancels any running model action.
+      this.forceNeutral();
+    }
+    // PROTOCOL §4.5: a long command running when ESTOP arrives ends with FAILED.
+    if (pending >= 0) this.respond(pending, CommandStatus.FAILED, 0);
   }
 
   // ---- ENUM / INFO -----------------------------------------------------------------------
@@ -777,7 +932,9 @@ export abstract class SimNode implements BusEndpoint {
 
   /** Finishes a long-running command (IN_PROGRESS → OK/FAILED). */
   protected completeCommand(cmd: number, status: number, result: number): void {
-    if (this.longCmd === cmd) this.longCmd = -1;
+    // A command ESTOP already ended with FAILED gets no second answer.
+    if (this.longCmd !== cmd) return;
+    this.longCmd = -1;
     this.respond(cmd, status, result >>> 0);
   }
 
@@ -785,32 +942,37 @@ export abstract class SimNode implements BusEndpoint {
     return this.longCmd;
   }
 
-  private onCommand(cmd: number, arg: number): void {
-    const enabled = this.isEnabled();
+  private onCommand(cmd: number, arg: number, broadcast: boolean): void {
     if (this.mode === NodeMode.BOOTLOADER) {
       // Only REBOOT is answered in the bootloader; everything else stays silent (PROTOCOL §9).
-      if (cmd === Command.REBOOT) {
-        this.respond(cmd, CommandStatus.OK, 0);
-        this.reboot(false);
-      }
+      // Leaving it only makes sense with a valid image to start.
+      if (cmd !== Command.REBOOT) return;
+      if (!this.appValid) return this.respond(cmd, CommandStatus.FAILED, 0);
+      this.respond(cmd, CommandStatus.OK, 0);
+      this.fwStartAt = this.now + FW_START_DELAY_MS;
       return;
     }
+    const enabled = this.isEnabled();
     switch (cmd) {
-      case Command.REBOOT:
-        if (enabled) return this.respond(cmd, CommandStatus.DENIED, 0);
-        this.respond(cmd, CommandStatus.OK, 0);
-        this.reboot(false);
-        return;
       case Command.ENTER_BOOTLOADER:
-        if (enabled) return this.respond(cmd, CommandStatus.DENIED, 0);
+        // Studio's recovery beacon (PROTOCOL §9.0) is for bootloaders starting up: ignored here.
+        if (broadcast && arg === RECOVERY_STAY_MAGIC) return;
+      // falls through
+      case Command.REBOOT:
+        // ESTOP is only lifted by CLEAR_ESTOP or a power cut, so a reset is refused too.
+        if (enabled || this.estop) return this.respond(cmd, CommandStatus.DENIED, 0);
+        if (cmd === Command.ENTER_BOOTLOADER && arg !== (ENTER_BOOTLOADER_INTENT | this.uid16) >>> 0) {
+          return this.respond(cmd, CommandStatus.INVALID_ARG, 0);
+        }
         this.respond(cmd, CommandStatus.OK, 0);
-        this.reboot(true);
+        this.reboot(cmd === Command.ENTER_BOOTLOADER);
         return;
       case Command.SAVE_PARAMS:
         if (enabled) return this.respond(cmd, CommandStatus.DENIED, 0);
         if (this.flashWriteFails) return this.respond(cmd, CommandStatus.FAILED, 0);
         this.params.save();
         this.flashName.set(this.name);
+        this.flashCorrupt = false;
         this.setFault(FaultBit.PARAM_CRC, false);
         this.respond(cmd, CommandStatus.OK, 0);
         return;
@@ -819,31 +981,49 @@ export abstract class SimNode implements BusEndpoint {
         this.params.loadDefaults();
         this.respond(cmd, CommandStatus.OK, 0);
         return;
+      case Command.LOAD_SAVED:
+        // Back to the stored settings (parameters and name); unsaved changes are dropped.
+        if (enabled) return this.respond(cmd, CommandStatus.DENIED, 0);
+        if (this.flashCorrupt) return this.respond(cmd, CommandStatus.FAILED, 0);
+        this.params.loadFlash();
+        this.name.set(this.flashName);
+        this.respond(cmd, CommandStatus.OK, 0);
+        return;
       case Command.CLEAR_FAULTS:
         this.onClearFaults();
-        this.faultSticky = this.faultActive | this.faultWarn;
+        // PARAM_CRC is a latched condition, not a live one: clearing it is the operator's
+        // acknowledgement that the defaults are in use (same as the C library).
+        this.setFault(FaultBit.PARAM_CRC, false);
+        this.faultSticky = this.faultActive;
         // Latched model faults released above drop out of `faultActive` at the next app step;
         // only what is still active then stays sticky.
         this.clearStickyAt = this.now + 1;
         this.respond(cmd, CommandStatus.OK, 0);
         return;
-      case Command.SELF_TEST:
-        if (enabled || this.longCmd >= 0) return this.respond(cmd, CommandStatus.DENIED, 0);
-        this.longCmd = cmd;
-        this.selfTestAt = this.now + SELF_TEST_MS;
-        this.respond(cmd, CommandStatus.IN_PROGRESS, 0);
-        return;
       case Command.CLEAR_ESTOP:
+        // PROTOCOL §4.7: an ESTOP latched in the same processing turn wins.
+        if (this.estop && this.estopAt === this.now) return this.respond(cmd, CommandStatus.DENIED, 0);
         if (this.estop) {
           this.estop = false;
           this.setFault(FaultBit.ESTOP, false);
+          this.ctrlArmed = 0; // the target that was flowing before ESTOP must not resume
         }
         this.respond(cmd, CommandStatus.OK, 0);
         return;
     }
+    if (this.longCmd >= 0) {
+      // A repeat of the running command (host retry after a lost reply) gets the progress
+      // answer again; anything else waits for it to finish.
+      return this.respond(cmd, cmd === this.longCmd ? CommandStatus.IN_PROGRESS : CommandStatus.DENIED, 0);
+    }
+    if (cmd === Command.SELF_TEST) {
+      if (enabled) return this.respond(cmd, CommandStatus.DENIED, 0);
+      this.longCmd = cmd;
+      this.selfTestAt = this.now + SELF_TEST_MS;
+      this.respond(cmd, CommandStatus.IN_PROGRESS, 0);
+      return;
+    }
     if (cmd < 0x40 || !this.def.actions.some((a) => a.cmd === cmd)) return this.respond(cmd, CommandStatus.UNSUPPORTED, 0);
-    const a = this.def.actions.find((x) => x.cmd === cmd)!;
-    if (a.longRunning && this.longCmd >= 0) return this.respond(cmd, CommandStatus.DENIED, 0);
     const r = this.action(cmd, arg);
     if (r.status === CommandStatus.IN_PROGRESS) this.longCmd = cmd;
     this.respond(cmd, r.status, r.result >>> 0);
@@ -868,7 +1048,8 @@ export abstract class SimNode implements BusEndpoint {
   }
 
   get unsaved(): boolean {
-    if (this.params.unsaved) return true;
+    // A corrupt store holds nothing: whatever runs now is not saved.
+    if (this.flashCorrupt || this.params.unsaved) return true;
     for (let i = 0; i < NAME_BYTES; i++) if (this.name[i] !== this.flashName[i]) return true;
     return false;
   }
@@ -881,9 +1062,13 @@ export abstract class SimNode implements BusEndpoint {
     if (this.hbNext <= this.now) this.hbNext = this.now + Timing.HEARTBEAT_MS;
     // PROTOCOL §9: the bootloader reports the installed image, 0.0.0 once it was erased.
     const fw = this.appValid ? this.appFw : { major: 0, minor: 0, patch: 0 };
+    // PROTOCOL §4.1: the first heartbeat after the application starts says BOOT, so the host
+    // knows the board restarted even when it never missed a heartbeat.
+    const state = this.mode === NodeMode.APP && this.bootHeartbeat ? DeviceState.BOOT : this.state;
+    this.bootHeartbeat = false;
     this.send(
       encodeHeartbeat(this.addr, {
-        state: this.state,
+        state,
         unsaved: this.mode === NodeMode.APP && this.unsaved,
         enabled: this.mode === NodeMode.APP && this.isEnabled(),
         warning: this.faultWarn !== 0,
@@ -919,14 +1104,12 @@ export abstract class SimNode implements BusEndpoint {
         const slot = d[0] ?? 0;
         if (slot >= STREAM_SLOTS) return;
         const sid = readU16(d, 1);
-        if (sid === STREAM_SID_CLEAR) this.streamSig[slot] = -1;
-        else {
-          const i = this.def.signals.findIndex((s) => s.sid === sid);
-          if (i < 0) return;
-          this.streamSig[slot] = i;
-        }
+        // An unknown sid still takes its slot (value NaN): the host maps DATA values to slots
+        // by position, so skipping it would shift every later slot.
+        this.streamSid[slot] = sid === STREAM_SID_CLEAR ? -1 : sid;
+        this.streamSig[slot] = sid === STREAM_SID_CLEAR ? -1 : this.def.signals.findIndex((s) => s.sid === sid);
         let n = 0;
-        while (n < STREAM_SLOTS && this.streamSig[n]! >= 0) n++;
+        while (n < STREAM_SLOTS && this.streamSid[n]! >= 0) n++;
         this.streamCount = n;
         return;
       }
@@ -948,6 +1131,11 @@ export abstract class SimNode implements BusEndpoint {
         this.streamOn = false;
         return;
     }
+  }
+
+  private streamValue(slot: number): number {
+    const i = this.streamSig[slot]!;
+    return i >= 0 ? (this.sig[i] ?? 0) : Number.NaN;
   }
 
   get streaming(): boolean {
@@ -981,14 +1169,17 @@ export abstract class SimNode implements BusEndpoint {
       tx[0] = seq;
       tx[1] = 0;
       writeU16(tx, 2, t);
-      for (let s = 0; s < k; s++) writeF32(tx, 4 + 4 * s, this.sig[this.streamSig[s]!] ?? 0);
+      for (let s = 0; s < k; s++) writeF32(tx, 4 + 4 * s, this.streamValue(s));
       this.sendRaw(Cls.STREAM_RSP, 0, 4 + 4 * k);
     } else {
-      for (let s = 0; s < this.streamCount; s++) {
+      // Classic mode sends a frame per slot; more than STREAM_MAX_SLOTS_CLASSIC would not fit
+      // the bus (PROTOCOL §8), the rest stay configured but silent.
+      const k = Math.min(this.streamCount, STREAM_MAX_SLOTS_CLASSIC);
+      for (let s = 0; s < k; s++) {
         tx[0] = seq;
         tx[1] = s;
         writeU16(tx, 2, t);
-        writeF32(tx, 4, this.sig[this.streamSig[s]!] ?? 0);
+        writeF32(tx, 4, this.streamValue(s));
         this.sendRaw(Cls.STREAM_RSP, 0, 8);
       }
     }
@@ -1002,57 +1193,82 @@ export abstract class SimNode implements BusEndpoint {
   }
 
   private onFwReq(index: number, d: Uint8Array, len: number): void {
-    if (this.mode !== NodeMode.BOOTLOADER) return this.fwAck(FwStatus.WRONG_STATE, 0);
     switch (index) {
       case FwReq.BEGIN: {
         if (len < 8) return;
+        // Verified image about to start (PROTOCOL §9).
+        if (this.fwPhase === 'verifying' || this.fwPhase === 'starting') return this.fwAck(FwStatus.BUSY);
+        // A REBOOT answered just before must not start an image this transfer may replace.
+        this.fwStartAt = -1;
         const size = readU32(d, 0);
-        if (size < 64 || size > FW_MAX_SIZE) return this.fwAck(FwStatus.BAD_IMAGE, 0);
+        this.fwNext = 0;
+        if (size < CYFW_HEADER_SIZE || size > FW_MAX_SIZE) {
+          this.fwPhase = 'idle';
+          this.fwBuf = null;
+          return this.fwAck(FwStatus.BAD_IMAGE, 0);
+        }
         this.fwSize = size;
         this.fwCrc = readU32(d, 4);
         this.fwBuf = new Uint8Array(size);
-        this.fwNext = 0;
-        this.fwSinceAck = 0;
-        this.fwBadOffsetSent = false;
-        // Erasing destroys the application: an interrupted update leaves the board in the bootloader.
-        this.appValid = false;
-        this.fwPhase = 'erasing';
-        this.fwPhaseDoneAt = this.now + 60 + Math.ceil(size / 2048) * 4;
-        this.fwAck(FwStatus.BUSY, 0);
+        this.fwBadCount = 0;
+        // Nothing is erased until the header has arrived and proved the image is for us.
+        this.fwPhase = 'header';
+        this.fwAck(FwStatus.OK, 0);
         return;
       }
       case FwReq.DATA: {
-        if (this.fwPhase === 'erasing' || this.fwPhase === 'verifying') return this.fwAck(FwStatus.BUSY);
-        if (this.fwPhase !== 'receiving' || !this.fwBuf || len < 4) return this.fwAck(FwStatus.WRONG_STATE);
+        // PROTOCOL §9: payload + 3 is a whole frame length; padding is never data.
+        if (len < 4 || !isValidFdLength(len)) return;
+        switch (this.fwPhase) {
+          case 'verifying':
+          case 'starting':
+            return this.fwAck(FwStatus.BUSY);
+          case 'erasing':
+            return; // the OK after the erase tells the host where to resume
+          case 'header':
+          case 'receiving':
+            break;
+          default:
+            return this.fwAck(FwStatus.WRONG_STATE);
+        }
+        const buf = this.fwBuf!;
         const off = readU24(d, 0);
         if (off !== this.fwNext) {
-          if (!this.fwBadOffsetSent) {
-            this.fwBadOffsetSent = true;
-            this.fwSinceAck = 0;
-            this.fwAck(FwStatus.BAD_OFFSET);
-          }
+          // One BAD_OFFSET per window of stray frames: the host resumes from next_offset, and
+          // frames it already had in flight should not each trigger another reply.
+          if (this.fwBadCount === 0) this.fwAck(FwStatus.BAD_OFFSET);
+          if (++this.fwBadCount >= FW_WINDOW_DEFAULT) this.fwBadCount = 0;
           return;
         }
-        this.fwBadOffsetSent = false;
-        const chunk = len - 3;
-        const n = Math.min(chunk, this.fwSize - off);
-        for (let i = 0; i < n; i++) this.fwBuf[off + i] = d[3 + i] ?? 0;
+        this.fwBadCount = 0;
+        // Bytes past `size` are padding of a short final chunk.
+        let n = Math.min(len - 3, this.fwSize - off);
+        if (this.fwPhase === 'header') {
+          // Header bytes only: whatever follows in this frame is sent again after the erase.
+          n = Math.min(n, CYFW_HEADER_SIZE - off);
+          for (let i = 0; i < n; i++) buf[off + i] = d[3 + i] ?? 0;
+          this.fwNext = off + n;
+          if (this.fwNext === CYFW_HEADER_SIZE) return this.onFwHeader();
+          if (++this.fwSinceAck >= FW_WINDOW_DEFAULT) this.fwAck(FwStatus.OK);
+          return;
+        }
+        if (n <= 0) return;
+        for (let i = 0; i < n; i++) buf[off + i] = d[3 + i] ?? 0;
         this.fwNext = off + n;
-        this.fwSinceAck++;
         if (this.flashWriteFails) {
           this.fwPhase = 'idle';
           return this.fwAck(FwStatus.FLASH_ERROR);
         }
         // A short final window is not acknowledged on its own: END's ACK closes it.
-        if (this.fwSinceAck >= FW_WINDOW_DEFAULT) {
-          this.fwSinceAck = 0;
-          this.fwAck(FwStatus.OK);
-        }
+        if (++this.fwSinceAck >= FW_WINDOW_DEFAULT) this.fwAck(FwStatus.OK);
         return;
       }
       case FwReq.END: {
-        if (this.fwPhase !== 'receiving' || !this.fwBuf) return this.fwAck(FwStatus.WRONG_STATE);
-        if (this.fwNext < this.fwSize) return this.fwAck(FwStatus.BAD_OFFSET);
+        if (this.fwPhase === 'verifying' || this.fwPhase === 'starting' || this.fwPhase === 'erasing') {
+          return this.fwAck(FwStatus.BUSY);
+        }
+        if (this.fwPhase !== 'receiving' && this.fwPhase !== 'header') return this.fwAck(FwStatus.WRONG_STATE);
+        if (this.fwPhase !== 'receiving' || this.fwNext < this.fwSize) return this.fwAck(FwStatus.BAD_OFFSET);
         this.fwPhase = 'verifying';
         this.fwPhaseDoneAt = this.now + FW_VERIFY_MS;
         return;
@@ -1060,25 +1276,72 @@ export abstract class SimNode implements BusEndpoint {
     }
   }
 
+  /** The first 64 bytes are in: check them before anything is erased (PROTOCOL §9). */
+  private onFwHeader(): void {
+    const buf = this.fwBuf!;
+    if (!this.headerFits(buf.subarray(0, CYFW_HEADER_SIZE), this.fwSize)) {
+      // The installed application stays untouched.
+      this.fwPhase = 'idle';
+      this.fwBuf = null;
+      return this.fwAck(FwStatus.BAD_IMAGE);
+    }
+    // Erasing destroys the application: an interrupted update leaves the board in the bootloader.
+    this.appValid = false;
+    this.appBroken = false;
+    this.fwPhase = 'erasing';
+    this.fwPhaseDoneAt = this.now + 60 + Math.ceil(this.fwSize / 2048) * 4;
+    this.fwAck(FwStatus.BUSY);
+  }
+
+  /** Header for this board (model, hardware revision, CRC) describing a file of exactly `size` bytes. */
+  private headerFits(hdr: Uint8Array, size: number): boolean {
+    const h = decodeCyfwHeader(hdr);
+    if (!h || h.headerVer !== 1 || crc32(hdr, 0, 60) !== h.headerCrc32) return false;
+    if (h.model !== this.def.model || this.hwRev < h.hwRevMin || this.hwRev > h.hwRevMax) return false;
+    const sig = (readU16(hdr, 22) & 1) !== 0 ? CYFW_SIGNATURE_SIZE : 0;
+    return size >= CYFW_HEADER_SIZE + sig && h.payloadSize === size - CYFW_HEADER_SIZE - sig;
+  }
+
   private fwTick(): void {
+    if (this.fwStartAt >= 0 && this.now >= this.fwStartAt) {
+      this.fwStartAt = -1;
+      // Only a just-verified image, or an untouched valid one (REBOOT).
+      if (this.fwPhase === 'starting' || (this.fwPhase === 'idle' && this.appValid)) return this.startApp();
+    }
     if (this.now < this.fwPhaseDoneAt) return;
     if (this.fwPhase === 'erasing') {
       this.fwPhase = 'receiving';
-      this.fwAck(FwStatus.OK, 0);
+      this.fwSinceAck = 0;
+      this.fwAck(FwStatus.OK); // next_offset = 64: the header is already in
     } else if (this.fwPhase === 'verifying') {
-      this.fwPhase = 'idle';
       const buf = this.fwBuf!;
       this.fwBuf = null;
-      if (crc32(buf) !== this.fwCrc) return this.fwAck(FwStatus.BAD_CRC);
-      const v = validateCyfw(buf, { model: this.def.model, hwRev: this.hwRev });
-      if (!v.ok) return this.fwAck(FwStatus.BAD_IMAGE);
-      this.appFw = { major: v.header.fwMajor, minor: v.header.fwMinor, patch: v.header.fwPatch };
-      this.gitHash = v.header.gitHash;
-      this.buildDay = v.header.buildDay;
+      if (crc32(buf) !== this.fwCrc) {
+        this.fwPhase = 'idle';
+        return this.fwAck(FwStatus.BAD_CRC);
+      }
+      const h = decodeCyfwHeader(buf)!;
+      const sig = (readU16(buf, 22) & 1) !== 0 ? CYFW_SIGNATURE_SIZE : 0;
+      if (crc32(buf, CYFW_HEADER_SIZE, buf.length - sig) !== h.payloadCrc32) {
+        this.fwPhase = 'idle';
+        return this.fwAck(FwStatus.BAD_IMAGE);
+      }
+      this.appFw = { major: h.fwMajor, minor: h.fwMinor, patch: h.fwPatch };
+      this.gitHash = h.gitHash;
+      this.buildDay = h.buildDay;
       this.appValid = true;
+      this.fwPhase = 'starting';
+      this.fwStartAt = this.now + FW_START_DELAY_MS;
       this.fwAck(FwStatus.OK);
-      this.reboot(false);
     }
+  }
+
+  /** Bootloader jumps to the installed application (no recovery window: it is already running). */
+  private startApp(): void {
+    this.powerOff();
+    this.mode = NodeMode.BOOT;
+    this.bootIntoLoader = false;
+    this.bootDoneAt = this.now;
   }
 
   get fwProgress(): { phase: string; received: number; size: number } {
@@ -1117,6 +1380,10 @@ export abstract class SimNode implements BusEndpoint {
       case 'flashError':
         this.flashWriteFails = on;
         return true;
+      case 'brokenApp':
+        // Takes effect at the next start-up; a new image (or switching it off) repairs it.
+        this.appBroken = on && this.appValid;
+        return true;
     }
     return this.injectModel(kind, on, arg);
   }
@@ -1131,6 +1398,7 @@ export abstract class SimNode implements BusEndpoint {
     if (this.hwFault) out.push('hardware');
     if (this.selfTestMask) out.push('selfTestFail');
     if (this.flashWriteFails) out.push('flashError');
+    if (this.appBroken) out.push('brokenApp');
     return [...out, ...this.activeModelInjections()];
   }
 

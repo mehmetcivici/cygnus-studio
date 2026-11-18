@@ -30,13 +30,18 @@ export interface BusStats {
   totalFrames: number;
   errorFrames: number;
   lostFrames: number;
-  /** Frames dropped because a transmit queue overflowed. */
+  /** Frames dropped because an endpoint's transmit queue overflowed. */
   txOverflow: number;
   shorted: boolean;
   terminations: number;
 }
 
-const QUEUE_MAX = 1024;
+/**
+ * Transmit queue of one endpoint (a board's software queue + mailboxes, the adapter's buffer).
+ * Each endpoint overflows on its own, like real nodes: a busy board cannot crowd out the
+ * host's frames, and within one queue a higher-priority frame displaces a lower one.
+ */
+const QUEUE_MAX = 256;
 const LOAD_ALPHA = 1 / 500;
 
 /**
@@ -69,6 +74,7 @@ export class SimBus {
   private incoming: BusFrame[] = [];
   private pending: BusFrame[] = [];
   private readonly pool: BusFrame[] = [];
+  private readonly queuedBy = new Map<BusEndpoint, number>();
   private busyUs = 0;
   /** Fraction (0..1) of frames destroyed on the wire. */
   lossRate = 0;
@@ -119,13 +125,18 @@ export class SimBus {
     return i >= 0 && this.connected[i] === true;
   }
 
-  /** Queues a frame (payload copied). Returns false if the endpoint is unplugged or the queue is full. */
+  /**
+   * Queues a frame (payload copied). Returns false if the endpoint is unplugged, or its queue is
+   * full of frames that all outrank this one; otherwise its lowest-priority frame is dropped.
+   */
   transmit(sender: BusEndpoint, id: number, data: Uint8Array, len: number, fd: boolean, brs: boolean, dataBitrate = 2_000_000): boolean {
     if (!this.isConnectedFast(sender)) return false;
-    if (this.incoming.length + this.pending.length >= QUEUE_MAX) {
+    const queued = this.queuedBy.get(sender) ?? 0;
+    if (queued >= QUEUE_MAX) {
       this.stats.txOverflow++;
-      return false;
+      if (!this.evictBelow(sender, id >>> 0)) return false;
     }
+    this.queuedBy.set(sender, (this.queuedBy.get(sender) ?? 0) + 1);
     const f = this.pool.pop() ?? newFrame();
     f.id = id >>> 0;
     const n = Math.min(len, FD_MAX_LEN);
@@ -137,6 +148,25 @@ export class SimBus {
     f.sender = sender;
     f.timestamp = 0;
     this.incoming.push(f);
+    return true;
+  }
+
+  /** Drops the sender's lowest-priority queued frame if it ranks below `id`. */
+  private evictBelow(sender: BusEndpoint, id: number): boolean {
+    let list: BusFrame[] | null = null;
+    let at = -1;
+    for (const l of [this.incoming, this.pending]) {
+      for (let k = 0; k < l.length; k++) {
+        const f = l[k]!;
+        if (f.sender === sender && f.id > id && (at < 0 || f.id > list![at]!.id)) {
+          list = l;
+          at = k;
+        }
+      }
+    }
+    if (!list) return false;
+    const [victim] = list.splice(at, 1);
+    this.release(victim!);
     return true;
   }
 
@@ -239,6 +269,12 @@ export class SimBus {
   }
 
   private release(f: BusFrame): void {
+    const s = f.sender;
+    if (s) {
+      const n = (this.queuedBy.get(s) ?? 1) - 1;
+      if (n > 0) this.queuedBy.set(s, n);
+      else this.queuedBy.delete(s);
+    }
     f.sender = null;
     this.pool.push(f);
   }

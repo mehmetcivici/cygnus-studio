@@ -1,4 +1,5 @@
 import {
+  BOOT_HEARTBEAT_MAX_MS,
   BROADCAST_ALL,
   Cls,
   Command,
@@ -12,6 +13,7 @@ import {
   NUM_UNASSIGNED,
   ParamStatus,
   PType,
+  RECOVERY_WINDOW_MS,
   StreamRsp,
   decodeName,
   decodeStatusFrame,
@@ -232,6 +234,7 @@ describe('parameters', () => {
     expect(set(0x0010, PType.U32, 2).status).toBe(ParamStatus.OUT_OF_RANGE); // below minNonZero
     expect(set(0x0010, PType.U32, 0).status).toBe(ParamStatus.OK);
     // lockedWhileEnabled: refuse while driving
+    host.arm(ESC);
     host.send(encodeCtrlSet(ESC, { mode: EscMode.DUTY, flags: 0, value: 0.1 }));
     host.run(5);
     expect(esc.isEnabled()).toBe(true);
@@ -294,10 +297,12 @@ describe('status frames', () => {
     host.clear();
     host.run(1000);
     const count = (i: number) => host.frames(Cls.STATUS, i).length;
-    expect(count(0)).toBeGreaterThanOrEqual(99);
-    expect(count(0)).toBeLessThanOrEqual(101);
-    expect(count(1)).toBeGreaterThanOrEqual(49);
-    expect(count(4)).toBeGreaterThanOrEqual(1);
+    // Catalog default periods (they change with the bus budget, PROTOCOL §10.1).
+    const per = (i: number) => esc.params.getKey(`status.${i}.period_ms`);
+    for (const i of [0, 1, 4]) {
+      expect(count(i)).toBeGreaterThanOrEqual(Math.floor(1000 / per(i)) - 1);
+      expect(count(i)).toBeLessThanOrEqual(Math.ceil(1000 / per(i)) + 1);
+    }
     host.send(encodeParamSet(ESC, { pid: 0x10, ptype: PType.U32, value: 0 }));
     host.run(5);
     host.clear();
@@ -360,10 +365,13 @@ describe('commands, faults, estop, timeout', () => {
     const { host, sim } = escSim();
     expect(host.ask(encodeCommand(ESC, { cmd: Command.REBOOT, arg: 0 }), 'commandRsp')[0]!.status).toBe(CommandStatus.OK);
     host.clear();
-    host.run(240);
-    expect(host.of('heartbeat')).toHaveLength(0);
+    host.run(RECOVERY_WINDOW_MS);
+    expect(host.of('heartbeat')).toHaveLength(0); // bootloader recovery window, then the app
+    host.run(BOOT_HEARTBEAT_MAX_MS);
+    // PROTOCOL §4.1: the first heartbeat after start-up says BOOT, within 100 ms.
+    expect(host.of('heartbeat', ESC).map((h) => h.state)).toEqual([DeviceState.BOOT]);
     host.run(600);
-    expect(host.of('heartbeat').length).toBeGreaterThan(0);
+    expect(host.last('heartbeat', ESC)!.state).toBe(DeviceState.IDLE);
     sim.inject('esc', 'selfTestFail', true, 0b100);
     const r = host.ask(encodeCommand(ESC, { cmd: Command.SELF_TEST, arg: 0 }), 'commandRsp', 400);
     expect(r.map((x) => x.status)).toEqual([CommandStatus.IN_PROGRESS, CommandStatus.OK]);
@@ -374,6 +382,7 @@ describe('commands, faults, estop, timeout', () => {
 
   it('ESTOP latches neutral until CLEAR_ESTOP; CTRL is ignored meanwhile', () => {
     const { host, esc } = escSim();
+    host.arm(ESC);
     host.send(encodeCtrlSet(ESC, { mode: EscMode.DUTY, flags: 0, value: 0.3 }));
     host.run(50);
     expect(esc.isEnabled()).toBe(true);
@@ -398,6 +407,7 @@ describe('commands, faults, estop, timeout', () => {
 
   it('goes neutral with a CTRL_TIMEOUT warning when commands stop', () => {
     const { host, esc } = escSim();
+    host.arm(ESC);
     host.send(encodeCtrlSet(ESC, { mode: EscMode.DUTY, flags: 0, value: 0.3 }));
     host.run(150);
     expect(esc.isEnabled()).toBe(true);
@@ -412,6 +422,7 @@ describe('commands, faults, estop, timeout', () => {
 
   it('the neutral command (mode 0, value 0) stops the motor and keeps the board fed', () => {
     const { host, esc } = escSim();
+    host.arm(ESC);
     host.send(encodeCtrlSet(ESC, { mode: EscMode.DUTY, flags: 0, value: 0.3 }));
     host.run(20);
     host.send(encodeCtrlSet(ESC, { mode: 0, flags: 0, value: 0 }));

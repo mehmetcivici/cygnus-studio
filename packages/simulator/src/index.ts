@@ -5,6 +5,7 @@ export {
   SimNode,
   NodeMode,
   COMMON_INJECTIONS,
+  CtrlResult,
   PEER_TIMEOUT_MS,
   type SimContext,
   type SimNodeOptions,

@@ -44,6 +44,10 @@ export class PdhLargeNode extends SimNode implements PowerDistributor {
   private energyWh = 0;
   private temp = 28;
   private readonly chanCurrent = new Float64Array(8);
+
+  get feeds(): readonly PowerFeed[] {
+    return this.channels;
+  }
   private readonly P: Record<string, number>;
   private readonly S: Record<string, number>;
 
@@ -199,6 +203,10 @@ export class PdhSmallNode extends SimNode implements PowerDistributor {
   private readonly S: Record<string, number>;
   private readonly pUv: number;
 
+
+  get feeds(): readonly PowerFeed[] {
+    return this.channels;
+  }
   constructor(o: PdhOptions = {}) {
     super(Model.POWER_DIST_SMALL, o);
     this.channels = Array.from({ length: 4 }, (_, i) => new PowerFeed(`${this.id}.ch${i + 1}`, this));
@@ -285,6 +293,7 @@ const SOC_F = { OUTPUT_OVERCURRENT: 10, OUT_OF_REGULATION: 11 } as const;
 export class SocRegNode extends SimNode implements PowerDistributor {
   /** Boards powered from the regulated output (rare; the computer is `loadA`). */
   readonly output: PowerFeed;
+  private readonly outputs: readonly PowerFeed[];
   loadA: number;
   private outV = 0;
   private outOn = false;
@@ -296,9 +305,14 @@ export class SocRegNode extends SimNode implements PowerDistributor {
   private readonly P: Record<string, number>;
   private readonly S: Record<string, number>;
 
+
+  get feeds(): readonly PowerFeed[] {
+    return this.outputs;
+  }
   constructor(o: SocRegOptions = {}) {
     super(Model.SOC_REGULATOR, { ...o, params: { 'reg.output_v': o.outputV ?? 12, ...o.params } });
     this.output = new PowerFeed(`${this.id}.out`, this);
+    this.outputs = [this.output];
     this.loadA = o.loadA ?? 1.8;
     const keys = ['reg.output_v', 'reg.uvlo_v', 'reg.current_warn_a'];
     this.P = Object.fromEntries(keys.map((k) => [k, this.params.index(k)]));

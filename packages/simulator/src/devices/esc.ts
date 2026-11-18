@@ -1,6 +1,6 @@
 import { Cls, CommandStatus, DevType, EscMode, FaultBit, Model, MFR, bitsToF32, idClass, idDevType, idIndex, idMfr, idNum, readF32 } from '@cygnus/protocol';
 import type { BusFrame } from '../bus';
-import { NodeMode, PEER_TIMEOUT_MS, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
+import { CtrlResult, NodeMode, PEER_TIMEOUT_MS, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
 import { SUBSTEPS, clamp, type Motor, type MotorDriver } from '../world';
 
 const SIGNAL_KEYS = [
@@ -194,6 +194,7 @@ export class EscNode extends SimNode implements MotorDriver {
   private velF = 0;
   private posOffset = 0;
   private hallCount = 0;
+  private hallRef = 0;
   private hallInit = false;
   private readonly edgeT = new Float64Array(EDGE_RING);
   private readonly edgeDir = new Int8Array(EDGE_RING);
@@ -312,17 +313,19 @@ export class EscNode extends SimNode implements MotorDriver {
 
   // ---- CTRL ------------------------------------------------------------------------------
 
-  protected override onCtrl(index: number, d: Uint8Array, len: number): boolean {
-    if (index !== 0 || len < 8) return false;
+  protected override onCtrl(index: number, d: Uint8Array, len: number, armed: boolean): CtrlResult {
+    if (index !== 0 || len < 8) return CtrlResult.INVALID;
     const mode = d[0] ?? 0;
     const value = readF32(d, 4);
-    if (mode > EscMode.BRAKE || !Number.isFinite(value)) return false;
+    if (mode > EscMode.BRAKE || !Number.isFinite(value)) return CtrlResult.INVALID;
+    const r = mode === EscMode.OFF && value === 0 ? CtrlResult.NEUTRAL : CtrlResult.DRIVE;
+    if (r === CtrlResult.DRIVE && !armed) return r;
     if (mode !== this.ctrlMode) {
       this.ctrlMode = mode;
       this.resetLoops();
     }
     this.setpoint = value;
-    return true;
+    return r;
   }
 
   // ---- remote Cyncoder -------------------------------------------------------------------
@@ -407,23 +410,33 @@ export class EscNode extends SimNode implements MotorDriver {
     const sign = this.pk(P_MOTOR_INVERT) ? -1 : 1;
     const i = m ? m.current : 0;
     const v = m && !m.coast ? m.voltage : 0;
-    this.supplyA = (vbus > 0.5 ? (i * v) / vbus : 0) + 0.06;
+    // Conduction and switching losses in the bridge come from the battery too (same terms as
+    // the FET heating below); motor power alone under-reports the supply current by a few %.
+    const loss = m && !m.coast ? this.bridgeLossW(i, vbus) : 0;
+    this.supplyA = (vbus > 0.5 ? (i * v + loss) / vbus : 0) + 0.06;
     const s = this.sig;
     s[this.S[S_PHASE_CURRENT]!] = sign * i + this.rng.gauss() * 0.04;
     s[this.S[S_BUS_CURRENT]!] = this.supplyA + this.rng.gauss() * 0.02;
     s[this.S[S_DUTY]!] = vbus > 0.5 ? (sign * v) / vbus : 0;
   }
 
+  /** Two FETs conduct the phase current; switching loss grows with PWM frequency. */
+  private bridgeLossW(i: number, vbus: number): number {
+    return i * i * this.stage.rdsOhm * 2 + 4e-5 * this.pk(P_MOTOR_PWM_KHZ) * vbus * Math.abs(i);
+  }
+
   /** Hall edge timing at substep resolution, interpolated to the crossing instant. */
   private trackHall(m: Motor, sub: number): void {
     const edges = 6 * m.spec.polePairs;
     const a = m.angleRot * edges;
-    const c = Math.floor(a);
     if (!this.hallInit) {
-      this.hallCount = c;
+      // A hall counter starts at 0 when the firmware starts, wherever the rotor stands.
+      this.hallRef = Math.floor(a);
+      this.hallCount = 0;
       this.hallInit = true;
       return;
     }
+    const c = Math.floor(a) - this.hallRef;
     if (c === this.hallCount) return;
     const dir = c > this.hallCount ? 1 : -1;
     const n = Math.min(Math.abs(c - this.hallCount), EDGE_RING);
@@ -761,7 +774,7 @@ export class EscNode extends SimNode implements MotorDriver {
   private thermal(m: Motor | null): void {
     const i = m ? m.current : 0;
     const vbus = this.supplyV;
-    const p = i * i * this.stage.rdsOhm * 2 + 4e-5 * this.pk(P_MOTOR_PWM_KHZ) * vbus * Math.abs(i) + 0.15 + this.extraHeatW;
+    const p = this.bridgeLossW(i, vbus) + 0.15 + this.extraHeatW;
     const amb = this.ctx.world.ambientC;
     this.fetTemp += ((p - (this.fetTemp - amb) / this.stage.thermalR) / this.stage.thermalC) * 0.001;
   }

@@ -87,12 +87,12 @@ describe('host ↔ simulator: firmware update', () => {
     const e = await r.caught(d.firmware.update(img), 30_000);
     expect(e).toBeInstanceOf(CyError);
     expect(e).toMatchObject({ code: 'REJECTED', status: FwStatus.BAD_IMAGE, statusKind: 'fw' });
-    // The application was erased: the board waits in the bootloader and reports 0.0.0.
+    // PROTOCOL §9: the header is checked before anything is erased, so the installed
+    // application survives (the board reports it even while it waits in the bootloader).
     await r.runFor(1200);
-    expect(sim.node('esc').mode).toBe(3);
-    expect(d.bootloader).toBe(true);
-    expect(d.fw).toEqual({ major: 0, minor: 0, patch: 0 });
-    // A correct image recovers it straight from the bootloader.
+    expect(sim.node('esc').firmware).toEqual({ major: 1, minor: 0, patch: 0 });
+    expect(d.fw).toEqual({ major: 1, minor: 0, patch: 0 });
+    // A correct image still goes through.
     (d as unknown as { model: number }).model = Model.ESC_80A;
     const ok = await r.settle(d.firmware.update(makeDemoFirmware(Model.ESC_80A, '1.0.1', { size: 4000 })), 30_000);
     expect(ok.version).toEqual({ major: 1, minor: 0, patch: 1 });

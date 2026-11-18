@@ -1,9 +1,10 @@
-import { BROADCAST_ALL, DevType, FaultBit, ManualScheduler, encodeEnumReq, encodeFaultReq, makeTxFrame } from '@cygnus/protocol';
+import { BROADCAST_ALL, CygnusBus, DevType, FaultBit, ManualScheduler, Timing, encodeEnumReq, encodeFaultReq, makeTxFrame } from '@cygnus/protocol';
 import { describe, expect, it } from 'vitest';
 import { SimBus, frameTimeUs, type BusEndpoint, type BusFrame } from '../src/bus';
 import { CyncoderNode } from '../src/devices/cyncoder';
 import { Prng } from '../src/prng';
 import { RealtimeRunner } from '../src/runner';
+import { createScenario } from '../src/scenarios';
 import { Simulation } from '../src/simulation';
 import { Host } from './helpers';
 
@@ -104,6 +105,94 @@ describe('SimBus', () => {
   });
 });
 
+describe('SimBus transmit queues (host-sim #6)', () => {
+  it('each endpoint overflows on its own: a babbling board cannot crowd out another sender', () => {
+    const { bus, eps } = busWith(3);
+    const [babbler, host, rx] = eps as [Ep, Ep, Ep];
+    let accepted = 0;
+    for (let i = 0; i < 2000; i++) if (bus.transmit(babbler, 0x1f08ffff, d8, 8, false, false)) accepted++;
+    expect(accepted).toBe(256);
+    expect(bus.stats.txOverflow).toBe(2000 - 256);
+    expect(bus.transmit(host, 0x0008_1dc0, d8, 2, false, false)).toBe(true); // ESTOP-like broadcast
+    bus.step(0, 1);
+    expect(rx.got[0]!.id).toBe(0x0008_1dc0);
+  });
+
+  it('a full queue gives way to a higher-priority frame by dropping its own lowest-priority one', () => {
+    const { bus, eps } = busWith(2);
+    const [tx, rx] = eps as [Ep, Ep];
+    for (let i = 0; i < 256; i++) expect(bus.transmit(tx, 0x02000000 + i, d8, 8, false, false)).toBe(true);
+    expect(bus.transmit(tx, 0x03000000, d8, 8, false, false)).toBe(false); // ranks below all of them
+    expect(bus.transmit(tx, 0x00080000, d8, 8, false, false)).toBe(true);
+    expect(bus.queued).toBe(256);
+    for (let t = 0; t < 100; t++) bus.step(t, 1);
+    const ids = rx.got.map((g) => g.id);
+    expect(ids[0]).toBe(0x00080000);
+    expect(ids).not.toContain(0x02000000 + 255); // the one that was displaced
+    expect(ids).toHaveLength(256);
+  });
+});
+
+describe('RealtimeRunner in a background tab (host-sim #8)', () => {
+  it('1 Hz timers: the simulation keeps pace and no board is taken for lost', async () => {
+    const sim = createScenario('bench.arm');
+    const sched = new ManualScheduler(0);
+    const bus = new CygnusBus(sim.createTransport(), sched, {});
+    await bus.start();
+    const fg = new RealtimeRunner(sim, sched, { tickMs: 4 });
+    fg.start();
+    const run = async (ms: number, step: number): Promise<void> => {
+      for (let t = 0; t < ms; t += step) {
+        sched.advance(step);
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      }
+    };
+    await run(3000, 4);
+    expect(bus.devices.filter((d) => d.online)).toHaveLength(sim.nodes.length);
+    let lost = 0;
+    bus.on('deviceLost', () => lost++);
+    fg.stop();
+    const bg = new RealtimeRunner(sim, sched, { tickMs: 1000 });
+    bg.start();
+    const t0 = sim.timeMs;
+    await run(10_000, 1000);
+    expect(sim.timeMs - t0).toBeGreaterThanOrEqual(9990);
+    expect(bg.droppedMs).toBe(0);
+    expect(lost).toBe(0);
+    bg.stop();
+    await bus.stop();
+  });
+
+  it('after a stall longer than the catch-up limit, frame stamps still end at the host clock', () => {
+    const sim = createScenario('bench.flywheel');
+    const sched = new ManualScheduler(0);
+    const t = sim.createTransport();
+    void t.open();
+    const stamps: number[] = [];
+    t.onFrame((f) => stamps.push(f.timestamp));
+    // The browser holds the first timer back by 10 s.
+    let lag = 10_000;
+    const laggy = {
+      now: () => sched.now(),
+      setTimeout: (fn: () => void, ms: number) => {
+        const h = sched.setTimeout(fn, ms + lag);
+        lag = 0;
+        return h;
+      },
+      clearTimeout: (h: unknown) => sched.clearTimeout(h),
+    };
+    const runner = new RealtimeRunner(sim, laggy, { tickMs: 4 });
+    runner.start();
+    sched.advance(10_004);
+    expect(runner.droppedMs).toBeGreaterThan(10_000 - Timing.LOST_AFTER_MS - 600);
+    // Heartbeats of the caught-up stretch are stamped within it, the last ones just before now.
+    expect(stamps.at(-1)!).toBeLessThanOrEqual(sched.now());
+    expect(stamps.at(-1)!).toBeGreaterThan(sched.now() - Timing.HEARTBEAT_MS - 60);
+    expect(stamps[0]!).toBeGreaterThanOrEqual(sched.now() - Timing.LOST_AFTER_MS - 600);
+    runner.stop();
+  });
+});
+
 describe('simulation-level bus faults', () => {
   it('boards flag CAN_ERR while the bus is shorted and recover after', () => {
     const sim = new Simulation({ seed: 1 });
@@ -114,11 +203,12 @@ describe('simulation-level bus faults', () => {
     host.clear();
     host.run(600);
     expect(host.rx).toHaveLength(0);
-    expect(enc.faults.active & (1 << FaultBit.CAN_ERR)).not.toBe(0);
+    // A warning, as in the C library: the board keeps working, the host sees why frames went missing.
+    expect(enc.faults.warn & (1 << FaultBit.CAN_ERR)).not.toBe(0);
     sim.setBusShort(false);
     host.run(10);
     const f = host.ask(encodeFaultReq({ devType: DevType.ENCODER, num: 1 }), 'faultRsp')[0]!;
-    expect(f.active & (1 << FaultBit.CAN_ERR)).toBe(0);
+    expect(f.warn & (1 << FaultBit.CAN_ERR)).toBe(0);
     expect(f.sticky & (1 << FaultBit.CAN_ERR)).not.toBe(0);
   });
 

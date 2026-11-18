@@ -38,11 +38,11 @@ describe('host ↔ simulator: connection life', () => {
     sim.setBusShort(true);
     await r.runFor(1700);
     expect(r.bus.devices.every((d) => !d.online)).toBe(true);
-    for (const n of sim.nodes) expect(n.faults.active & (1 << FaultBit.CAN_ERR)).not.toBe(0);
+    for (const n of sim.nodes) expect(n.faults.warn & (1 << FaultBit.CAN_ERR)).not.toBe(0);
     sim.setBusShort(false);
     await r.until(() => r.bus.devices.every((d) => d.online && d.infoLoaded), 3000, 'boards back');
     await r.runFor(600);
-    for (const d of r.bus.devices) expect(d.faults.active & (1 << FaultBit.CAN_ERR)).toBe(0);
+    for (const d of r.bus.devices) expect(d.faults.warn & (1 << FaultBit.CAN_ERR)).toBe(0);
     expect(r.bus.devices.length).toBe(sim.nodes.length);
   });
 

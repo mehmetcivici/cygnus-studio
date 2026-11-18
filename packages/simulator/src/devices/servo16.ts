@@ -1,5 +1,5 @@
 import { CommandStatus, FaultBit, Model, SERVO16_CHANNELS, readU16 } from '@cygnus/protocol';
-import { NodeMode, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
+import { CtrlResult, NodeMode, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
 import { HobbyServo } from '../world';
 
 /** What a channel's pulse train drives: a hobby servo, or any PWM input (`{ pulseUs }`). */
@@ -62,10 +62,15 @@ export class Servo16Node extends SimNode {
     this.pushOutputs(0.001);
   }
 
-  protected override onCtrl(index: number, d: Uint8Array, len: number): boolean {
-    if (index > 3 || len < 8) return false;
+  /** Pulse frames: one per group of 4 channels; all pulses 0 is that group's neutral command. */
+  protected override onCtrl(index: number, d: Uint8Array, len: number, armed: boolean): CtrlResult {
+    if (index > 3 || len < 8) return CtrlResult.INVALID;
+    let any = false;
+    for (let k = 0; k < 4; k++) if (readU16(d, 2 * k) !== 0) any = true;
+    const r = any ? CtrlResult.DRIVE : CtrlResult.NEUTRAL;
+    if (r === CtrlResult.DRIVE && !armed) return r;
     for (let k = 0; k < 4; k++) this.target[index * 4 + k] = readU16(d, 2 * k);
-    return true;
+    return r;
   }
 
   /** Timeout / ESTOP: every channel goes to its failsafe pulse (0 = stop pulsing). */

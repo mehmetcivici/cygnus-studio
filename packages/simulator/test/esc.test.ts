@@ -1,4 +1,4 @@
-import { Command, DevType, EscMode, FaultBit, Model, PType, encodeCommand, encodeCtrlSet, encodeParamSet, f32ToBits } from '@cygnus/protocol';
+import { Command, DeviceState, DevType, EscMode, FaultBit, Model, PType, encodeCommand, encodeCtrlSet, encodeParamSet, f32ToBits } from '@cygnus/protocol';
 import { describe, expect, it } from 'vitest';
 import { EscNode } from '../src/devices/esc';
 import { createScenario } from '../src/scenarios';
@@ -28,6 +28,7 @@ function setF(host: Host, pid: number, value: number, ptype: number = PType.F32)
 /** Drives `mode`/`value` every 10 ms for `ms`, sampling signals each ms. */
 function drive(host: Host, esc: EscNode, mode: number, value: number, ms: number): Array<Record<string, number>> {
   const out: Array<Record<string, number>> = [];
+  host.arm(A);
   for (let t = 0; t < ms; t++) {
     if (t % 10 === 0) host.send(encodeCtrlSet(A, { mode, flags: 0, value }));
     host.run(1);
@@ -122,14 +123,48 @@ describe('ESC position loop (bench.arm)', () => {
     expect(sd(tail)).toBeLessThan(0.002);
   });
 
-  it('remote encoder loss is a fault and drops closed-loop drive', () => {
+  it('remote encoder loss is a fault and drops closed-loop drive; driving again needs a neutral first', () => {
     const { host, esc, sim } = bench('bench.arm');
     drive(host, esc, EscMode.POSITION, 0.1, 200);
     sim.setCable('enc', false);
     drive(host, esc, EscMode.POSITION, 0.1, 200);
     expect(esc.faults.active & (1 << 13)).not.toBe(0);
-    expect(esc.isEnabled()).toBe(true);
+    // An active fault forces neutral and refuses CTRL (PROTOCOL §7).
+    expect(esc.isEnabled()).toBe(false);
+    expect(esc.state).toBe(DeviceState.FAULT);
     expect(esc.signalValues()['loop.output']).toBe(0);
+    sim.setCable('enc', true);
+    for (let t = 0; t < 200; t += 10) {
+      host.send(encodeCtrlSet(A, { mode: EscMode.POSITION, flags: 0, value: 0.1 }));
+      host.run(10);
+    }
+    expect(esc.faults.active).toBe(0);
+    expect(esc.isEnabled()).toBe(false); // the stale target does not come back by itself
+    drive(host, esc, EscMode.POSITION, 0.1, 50);
+    expect(esc.isEnabled()).toBe(true);
+  });
+});
+
+describe('ESC sensing and supply (host-sim #13, #14)', () => {
+  it('the hall position starts at 0 wherever the rotor stands at power-up', () => {
+    const sim = createScenario('bench.flywheel');
+    sim.world.shaft('flywheel').angle = 2.7; // rad
+    const host = new Host(sim);
+    host.run(500);
+    const esc = sim.node('esc') as EscNode;
+    expect(Math.abs(esc.signalValues().position!)).toBeLessThan(0.03);
+  });
+
+  it('bridge losses are drawn from the supply as well', () => {
+    const { host, esc, sim } = bench();
+    sim.world.setJammed('flywheel', true);
+    const s = drive(host, esc, EscMode.CURRENT, 40, 400).slice(-200);
+    const mean = (k: string) => s.reduce((a, x) => a + x[k]!, 0) / s.length;
+    const motorOnly = Math.abs(mean('phase.current') * mean('duty')) + 0.06;
+    const i = Math.abs(mean('phase.current'));
+    const vbus = mean('bus.voltage');
+    const conduction = (2 * i * i * 0.0016) / vbus;
+    expect(mean('bus.current') - motorOnly).toBeGreaterThan(0.8 * conduction);
   });
 });
 

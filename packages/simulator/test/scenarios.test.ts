@@ -3,6 +3,7 @@ import { getTemplate } from '@cygnus/vehicles';
 import { describe, expect, it } from 'vitest';
 import type { EscNode } from '../src/devices/esc';
 import { buildVehicleScenario, createScenario, ScenarioBuilder, scenarios } from '../src/scenarios';
+import type { PowerDistributor } from '../src/simulation';
 import { MOTORS } from '../src/world';
 import { Host } from './helpers';
 
@@ -25,6 +26,32 @@ describe('scenarios', () => {
       expect(snap.nodes.filter((n) => n.faults.active !== 0).map((n) => n.id)).toEqual([]);
     }
     expect(host.of('heartbeat').length).toBeGreaterThan(0);
+  });
+
+  // host-sim #7 / test #5: every feed's load is what hangs on it right now, nothing piles up.
+  it.each(scenarios.map((s) => s.id))('%s (servo channels where possible): power feeds stay consistent for 10 s', (id) => {
+    const sim = createScenario(id, { useServoChannels: true });
+    const w = sim.world;
+    const distributors = sim.nodes.filter((n): n is typeof n & PowerDistributor => 'feeds' in n);
+    for (let t = 0; t < 10; t++) {
+      sim.advance(1000);
+      for (const dist of distributors) {
+        for (const f of dist.feeds) {
+          let expected = 0;
+          for (const n of sim.nodes) if (n.feed === f && n.mode !== 0) expected += n.supplyCurrent();
+          for (const e of w.pwmEscs) if (e.feed === f) expected += e.supplyCurrent;
+          // Loads are summed before the boards' step, so they lag by one ms: compare loosely.
+          expect(Math.abs(f.load - expected)).toBeLessThan(0.05 + 0.05 * expected);
+          expect(f.load).toBeLessThan(100);
+        }
+      }
+      let top = 0;
+      for (const n of sim.nodes) if (n.feed === w.battery.feed && n.mode !== 0) top += n.supplyCurrent();
+      for (const e of w.pwmEscs) if (e.feed === w.battery.feed) top += e.supplyCurrent;
+      expect(Math.abs(w.battery.feed.load - top)).toBeLessThan(0.05 + 0.05 * top);
+    }
+    expect(w.battery.feed.voltage).toBeGreaterThan(11);
+    expect(sim.nodes.every((n) => n.mode !== 0)).toBe(true);
   });
 
   it('every model is present in all.devices', () => {
@@ -63,6 +90,7 @@ describe('scenarios', () => {
     const p = sim.slotPlacements;
     const tangent: Record<string, number> = { fl: 0.125, fr: 0.375, bl: -0.125, br: -0.375 };
     for (const g of Object.keys(tangent)) sim.world.shaft(p[`${g}.steer`]!.shaftId!).angle = tangent[g]! * 2 * Math.PI;
+    for (const g of Object.keys(tangent)) host.arm({ devType: DevType.MOTOR_CONTROLLER, num: sim.node(p[`${g}.drive`]!.nodeId).num });
     for (let t = 0; t < 1000; t += 10) {
       for (const g of Object.keys(tangent)) {
         const num = sim.node(p[`${g}.drive`]!.nodeId).num;
@@ -88,6 +116,7 @@ describe('scenarios', () => {
     const host = new Host(quad);
     host.run(400);
     const escs = quad.nodes.filter((n) => n.def.devType === DevType.MOTOR_CONTROLLER);
+    for (const e of escs) host.arm({ devType: DevType.MOTOR_CONTROLLER, num: e.num });
     for (let t = 0; t < 1500; t += 10) {
       escs.forEach((e, i) => host.send(encodeCtrlSet({ devType: DevType.MOTOR_CONTROLLER, num: e.num }, { mode: EscMode.DUTY, flags: 0, value: i === 0 ? 0.9 : 0.8 })));
       host.run(10);
@@ -101,6 +130,7 @@ describe('scenarios', () => {
     const h2 = new Host(boat);
     h2.run(400);
     const thr = boat.nodes.filter((n) => n.def.devType === DevType.MOTOR_CONTROLLER);
+    h2.arm({ devType: DevType.MOTOR_CONTROLLER, num: thr[0]!.num });
     for (let t = 0; t < 1000; t += 10) {
       h2.send(encodeCtrlSet({ devType: DevType.MOTOR_CONTROLLER, num: thr[0]!.num }, { mode: EscMode.DUTY, flags: 0, value: 0.6 }));
       h2.run(10);
@@ -121,6 +151,7 @@ describe('scenarios', () => {
       const host = new Host(sim);
       host.run(300);
       host.send(encodeEnumReq(BROADCAST_ALL, { filter: 0 }));
+      host.arm({ devType: DevType.MOTOR_CONTROLLER, num: 1 });
       for (let t = 0; t < 1500; t += 10) {
         host.send(encodeCtrlSet({ devType: DevType.MOTOR_CONTROLLER, num: 1 }, { mode: EscMode.VELOCITY, flags: 0, value: 2000 }));
         host.run(10);
@@ -159,6 +190,7 @@ describe('scenarios', () => {
     const escNums = sim.nodes.filter((n) => n.def.devType === DevType.MOTOR_CONTROLLER).map((n) => n.num);
     host.send(encodeStreamConfig({ devType: DevType.MOTOR_CONTROLLER, num: 30 }, { slot: 0, sid: 5 }));
     host.send(encodeStreamStart({ devType: DevType.MOTOR_CONTROLLER, num: 30 }, { period100us: 10 }));
+    for (const num of escNums) host.arm({ devType: DevType.MOTOR_CONTROLLER, num });
     const run = (ms: number): void => {
       for (let t = 0; t < ms; t += 20) {
         for (const num of escNums) host.send(encodeCtrlSet({ devType: DevType.MOTOR_CONTROLLER, num }, { mode: EscMode.DUTY, flags: 0, value: 0.2 }));

@@ -1,5 +1,5 @@
 import { CommandStatus, FaultBit, Model, SealedServoMode, readF32 } from '@cygnus/protocol';
-import { NodeMode, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
+import { CtrlResult, NodeMode, SimNode, type InjectionKind, type SimNodeOptions } from '../node';
 import { MOTORS, clamp, type Motor, type MotorDriver, type Shaft } from '../world';
 
 const SIGNAL_KEYS = [
@@ -134,11 +134,13 @@ export class SealedServoNode extends SimNode implements MotorDriver {
     this.coast = true;
   }
 
-  protected override onCtrl(index: number, d: Uint8Array, len: number): boolean {
-    if (index !== 0 || len < 8) return false;
+  protected override onCtrl(index: number, d: Uint8Array, len: number, armed: boolean): CtrlResult {
+    if (index !== 0 || len < 8) return CtrlResult.INVALID;
     const mode = d[0] ?? 0;
     const v = readF32(d, 4);
-    if (mode > SealedServoMode.DUTY || !Number.isFinite(v)) return false;
+    if (mode > SealedServoMode.DUTY || !Number.isFinite(v)) return CtrlResult.INVALID;
+    const r = mode === SealedServoMode.OFF && v === 0 ? CtrlResult.NEUTRAL : CtrlResult.DRIVE;
+    if (r === CtrlResult.DRIVE && !armed) return r;
     if (mode !== this.ctrlMode) {
       this.ctrlMode = mode;
       this.integ = 0;
@@ -147,7 +149,7 @@ export class SealedServoNode extends SimNode implements MotorDriver {
     }
     if (this.stalled && Math.abs(v - this.stallSetpoint) > this.pk(P_POS_TOLERANCE_DEG)) this.stalled = false;
     this.setpoint = v;
-    return true;
+    return r;
   }
 
   protected override neutral(): void {

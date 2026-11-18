@@ -1,17 +1,21 @@
-import type { Scheduler } from '@cygnus/protocol';
+import { Timing, type Scheduler } from '@cygnus/protocol';
 import type { Simulation } from './simulation';
 
 export interface RealtimeRunnerOptions {
   /** Scheduler tick, ms (default 4). */
   tickMs?: number;
   /**
-   * Longest stretch of simulated time caught up in one tick (default 100 ms). A background
-   * tab can stall timers for seconds; the excess is dropped rather than replayed in a burst.
+   * Longest stretch of simulated time caught up in one tick (default 2000 ms). Background tabs
+   * run timers about once a second: the simulation must keep pace through such gaps, or the
+   * boards miss heartbeats and the host takes them for lost. Longer stalls are dropped.
    */
   maxCatchUpMs?: number;
   /** Simulated ms per wall-clock ms (default 1). */
   speed?: number;
 }
+
+/** Catch-up limit while the machine cannot keep up with real time (keeps the page responsive). */
+const CPU_BOUND_CATCH_UP_MS = 100;
 
 /** Drives a Simulation from a Scheduler so it runs in step with the wall clock. */
 export class RealtimeRunner {
@@ -19,6 +23,8 @@ export class RealtimeRunner {
   private last = 0;
   private readonly tickMs: number;
   private readonly maxCatchUpMs: number;
+  /** The last advance took longer than the time it simulated. */
+  private cpuBound = false;
   speed: number;
   /** Simulated time dropped because the host fell behind (ms). */
   droppedMs = 0;
@@ -29,7 +35,7 @@ export class RealtimeRunner {
     o: RealtimeRunnerOptions = {},
   ) {
     this.tickMs = o.tickMs ?? 4;
-    this.maxCatchUpMs = o.maxCatchUpMs ?? 100;
+    this.maxCatchUpMs = Math.max(o.maxCatchUpMs ?? Timing.LOST_AFTER_MS + 500, this.tickMs);
     this.speed = o.speed ?? 1;
   }
 
@@ -58,13 +64,20 @@ export class RealtimeRunner {
     const now = this.scheduler.now();
     let elapsed = (now - this.last) * this.speed;
     this.last = now;
-    if (elapsed > this.maxCatchUpMs) {
-      this.droppedMs += elapsed - this.maxCatchUpMs;
-      elapsed = this.maxCatchUpMs;
+    const cap = this.cpuBound ? Math.min(this.maxCatchUpMs, CPU_BOUND_CATCH_UP_MS) : this.maxCatchUpMs;
+    if (elapsed > cap) {
+      this.droppedMs += elapsed - cap;
+      elapsed = cap;
     }
+    // Frames of this catch-up are stamped so that it ends at `now`: node clocks and the host
+    // clock agree even when time was dropped, and the last heartbeats look as fresh to the
+    // host as they are on the simulated bus.
+    const start = this.sim.timeMs;
+    this.sim.hostTimeOffset = now - (start + elapsed);
     this.sim.advance(elapsed);
-    // Keep host timestamps on the scheduler clock even after dropped time or a speed change.
     this.sim.hostTimeOffset = now - this.sim.timeMs;
+    const simulated = this.sim.timeMs - start;
+    if (simulated > 0) this.cpuBound = this.scheduler.now() - now > simulated / this.speed;
     if (this.handle !== null) this.schedule();
   }
 }

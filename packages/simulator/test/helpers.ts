@@ -1,4 +1,4 @@
-import { decodeMessage, idClass, idIndex, idNum, idDevType, type CanFrame, type DecodedMessage, type TxFrame } from '@cygnus/protocol';
+import { Cls, decodeMessage, idClass, idIndex, idNum, idDevType, messageId, type Address, type CanFrame, type DecodedMessage, type TxFrame } from '@cygnus/protocol';
 import type { Simulation } from '../src/simulation';
 
 export interface Rx {
@@ -19,6 +19,14 @@ export class Host {
 
   send(f: TxFrame): void {
     this.transport.send(f);
+  }
+
+  /**
+   * Sends the neutral command of a CTRL index (all-zero payload: `SET` mode 0 / value 0, or
+   * all servo pulses 0), which arms the board for drive commands (PROTOCOL §7).
+   */
+  arm(addr: Address, index = 0): void {
+    this.transport.send({ id: messageId(addr, Cls.CTRL, index), data: new Uint8Array(8), fd: false, brs: false });
   }
 
   run(ms: number): void {
