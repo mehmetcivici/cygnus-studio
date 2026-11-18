@@ -381,6 +381,9 @@ void test_node_assign_id(void)
     cycan_enc_assign_id(&f, 0, 0, &a);
     to_node(&node, &f);
     run_ms(&node, &now, 1);
+    /* Confirmation first (within 50 ms), then the flash write. */
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_ENUM_RSP, 0xFF), 1);
+    CHECK_EQ(fk.nsent_at_write[CYCAN_REGION_IDENTITY], 1);
     reboot_node(&k_esc_app);
     CHECK_EQ(cycan_num(&node), 9);
 }
@@ -425,10 +428,16 @@ void test_node_conflict(void)
 
     hb.uid16 = (uint16_t)(cycan_uid(&node)->uid16 + 1u);
     cycan_enc_heartbeat(&f, DT, 5, &hb);
+    fake_clear(&fk);
     to_node(&node, &f);
     run_ms(&node, &now, 1);
     CHECK(!cycan_ctrl_allowed(&node));
     CHECK_EQ(app_log.neutral_reason, CYCAN_NEUTRAL_CONFLICT);
+    /* Announced with a CONFLICT-flagged ENUM_RSP within 0..20 ms. */
+    run_ms(&node, &now, 21);
+    rf = fake_find(&fk, CYCAN_CLS_ENUM_RSP, 0xFF, 0);
+    CHECK(rf != NULL && cycan_dec_enum_rsp(rf->data, rf->len, &r) && r.conflict && r.num == 5);
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_ENUM_RSP, 0xFF), 1);
     fake_clear(&fk);
     send_ctrl();
     run_ms(&node, &now, 1500);
@@ -443,14 +452,61 @@ void test_node_conflict(void)
     rf = fake_find(&fk, CYCAN_CLS_ENUM_RSP, 0xFF, 0);
     CHECK(rf != NULL && cycan_dec_enum_rsp(rf->data, rf->len, &r) && r.conflict && r.num == 5);
 
-    a.uid48 = cycan_uid(&node)->uid48;
-    a.new_num = 6;
+    /* Only an ASSIGN_ID for our uid48 ends it; the same number may be given again. */
+    a.uid48 = cycan_uid(&node)->uid48 + 1u;
+    a.new_num = 5;
     a.persist = false;
     cycan_enc_assign_id(&f, 0, 0, &a);
     to_node(&node, &f);
+    run_ms(&node, &now, 1);
+    CHECK(!cycan_ctrl_allowed(&node));
+    a.uid48 = cycan_uid(&node)->uid48;
+    cycan_enc_assign_id(&f, 0, 0, &a);
+    fake_clear(&fk);
+    to_node(&node, &f);
+    run_ms(&node, &now, 1);
+    rf = fake_find(&fk, CYCAN_CLS_ENUM_RSP, 0xFF, 0);
+    CHECK(rf != NULL && cycan_dec_enum_rsp(rf->data, rf->len, &r) && !r.conflict && r.num == 5);
     run_ms(&node, &now, 600);
     CHECK(cycan_ctrl_allowed(&node));
     CHECK(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_HEARTBEAT) >= 1);
+}
+
+void test_node_conflict_from_enum_rsp(void)
+{
+    cycan_frame_t f;
+    cycan_enum_rsp_t e, r;
+    const cycan_frame_t *rf;
+    setup(5);
+    /* Another board's ENUM_RSP for a different number, or our own uid48: no conflict. */
+    e.uid48 = cycan_uid(&node)->uid48 ^ 0x10000u;
+    e.num = 6;
+    e.conflict = false;
+    e.bootloader = false;
+    e.model = CYCAN_MODEL_ESC20A;
+    cycan_enc_enum_rsp(&f, DT, &e);
+    to_node(&node, &f);
+    e.uid48 = cycan_uid(&node)->uid48;
+    e.num = 5;
+    cycan_enc_enum_rsp(&f, DT, &e);
+    to_node(&node, &f);
+    /* Same number on another device type: no conflict either. */
+    e.uid48 = 0x123456789ull;
+    cycan_enc_enum_rsp(&f, CYCAN_CYNCODER_DEVTYPE, &e);
+    to_node(&node, &f);
+    run_ms(&node, &now, 30);
+    CHECK(cycan_ctrl_allowed(&node));
+
+    cycan_enc_enum_rsp(&f, DT, &e);
+    fake_clear(&fk);
+    to_node(&node, &f);
+    run_ms(&node, &now, 1);
+    CHECK(!cycan_ctrl_allowed(&node));
+    run_ms(&node, &now, 20);
+    rf = fake_find(&fk, CYCAN_CLS_ENUM_RSP, 0xFF, 0);
+    CHECK(rf != NULL && cycan_dec_enum_rsp(rf->data, rf->len, &r) && r.conflict && r.num == 5 && r.uid48 == cycan_uid(&node)->uid48);
+    run_ms(&node, &now, 1000);
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_HEARTBEAT), 0);
 }
 
 void test_node_param_statuses(void)

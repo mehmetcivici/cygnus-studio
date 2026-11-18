@@ -16,6 +16,8 @@ typedef struct {
     uint8_t uid96[12];
     uint8_t region[2][FAKE_REGION_SIZE];
     int erases, writes;
+    int nsent_at_write[2]; /* frames already sent when the region was last written */
+    uint8_t saved_num;     /* bootloader identity_save */
     int reboots, bootloaders, app_starts;
     int led_calls;
     bool led;

@@ -301,7 +301,9 @@ static cycan_init_result_t params_load(cycan_node_t *n)
 
 /* ---- Outgoing messages ----------------------------------------------------------- */
 
-static void send_enum_rsp(cycan_node_t *n)
+/* `ack` = confirmation of ASSIGN_ID: it must leave within 50 ms (PROTOCOL 3.3), so it uses
+ * the ordinary TX queue instead of the randomized discovery back-off. */
+static void send_enum_rsp(cycan_node_t *n, bool ack)
 {
     cycan_frame_t f;
     cycan_enum_rsp_t m;
@@ -311,6 +313,10 @@ static void send_enum_rsp(cycan_node_t *n)
     m.bootloader = false;
     m.model = n->app->model;
     cycan_enc_enum_rsp(&f, n->app->devtype, &m);
+    if (ack) {
+        send(n, &f);
+        return;
+    }
     n->enum_pending = false;
     if (!n->hal->can_send(n->hal->ctx, &f) && !n->enum_retried) {
         /* Same-delay boards collide; back off randomly once instead of queueing (PROTOCOL 3.2). */
@@ -434,11 +440,17 @@ static void latch_estop(cycan_node_t *n)
     neutral(n, CYCAN_NEUTRAL_ESTOP);
 }
 
+/* PROTOCOL 3.4: announce the conflict with a CONFLICT-flagged ENUM_RSP after 0..20 ms so the
+ * other holder of this address goes silent too; all of them wait for ASSIGN_ID. */
 static void enter_conflict(cycan_node_t *n)
 {
+    if (n->conflict) return;
     n->conflict = true;
     n->stream_active = false;
     neutral(n, CYCAN_NEUTRAL_CONFLICT);
+    n->enum_pending = true;
+    n->enum_retried = false;
+    n->enum_due = n->now + MS(rnd(n) % (CYCAN_CONFLICT_ANNOUNCE_MAX_MS + 1u));
 }
 
 static void on_assign(cycan_node_t *n, const cycan_assign_id_t *m)
@@ -454,9 +466,10 @@ static void on_assign(cycan_node_t *n, const cycan_assign_id_t *m)
         neutral(n, CYCAN_NEUTRAL_UNASSIGNED);
     }
     n->conflict = false;
+    n->enum_pending = false;
+    send_enum_rsp(n, true);
+    /* Persist after the confirmation is on its way: the flash erase may block for tens of ms. */
     if (m->persist) (void)identity_save(n);
-    n->enum_retried = false;
-    send_enum_rsp(n);
     n->hb_next = n->now + MS(n->hb_phase_ms);
 }
 
@@ -640,6 +653,13 @@ static void handle(cycan_node_t *n, uint32_t id, const uint8_t *d, uint8_t len)
 {
     uint8_t cls = CYCAN_ID_CLASS(id), index = CYCAN_ID_INDEX(id);
 
+    if (cls == CYCAN_CLS_ENUM_RSP) {
+        cycan_enum_rsp_t er;
+        if (CYCAN_ID_DEVTYPE(id) == n->app->devtype && !silent(n) && cycan_dec_enum_rsp(d, len, &er) && er.num == n->num &&
+            er.uid48 != n->uid.uid48)
+            enter_conflict(n);
+        return;
+    }
     if (cls == CYCAN_CLS_SYS_RSP) {
         cycan_heartbeat_t hb;
         if (index == CYCAN_SYS_HEARTBEAT && CYCAN_ID_DEVTYPE(id) == n->app->devtype && CYCAN_ID_NUM(id) == n->num &&
@@ -808,6 +828,9 @@ bool cycan_on_frame(cycan_node_t *n, uint32_t id, const uint8_t *data, uint8_t l
         /* Other boards' heartbeats from our own address: conflict detection input. */
         if (CYCAN_ID_INDEX(id) != CYCAN_SYS_HEARTBEAT || CYCAN_ID_DEVTYPE(id) != n->app->devtype || CYCAN_ID_NUM(id) != n->num)
             return false;
+    } else if (cls == CYCAN_CLS_ENUM_RSP) {
+        /* ENUM_RSP ids carry hash10, not NUM: the NUM check needs the payload (in poll). */
+        if (CYCAN_ID_DEVTYPE(id) != n->app->devtype || len < 8u || (data[6] & 0x3Fu) != n->num) return false;
     } else if (!cycan_accepts(id, n->app->devtype, n->num)) {
         return false;
     } else if (cls == CYCAN_CLS_SYS_REQ && CYCAN_ID_INDEX(id) == CYCAN_SYS_ESTOP) {
@@ -868,7 +891,7 @@ void cycan_poll(cycan_node_t *n, uint32_t now_us)
             neutral(n, CYCAN_NEUTRAL_CTRL_TIMEOUT);
         }
     }
-    if (n->enum_pending && due(n->now, n->enum_due)) send_enum_rsp(n);
+    if (n->enum_pending && due(n->now, n->enum_due)) send_enum_rsp(n, false);
 
     if (!silent(n)) {
         if (due(n->now, n->hb_next)) {

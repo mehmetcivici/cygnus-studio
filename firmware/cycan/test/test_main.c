@@ -17,6 +17,7 @@ int g_failures;
     X(test_node_assign_id)              \
     X(test_node_heartbeat_timing)       \
     X(test_node_conflict)               \
+    X(test_node_conflict_from_enum_rsp) \
     X(test_node_param_statuses)         \
     X(test_node_save_reboot_defaults)   \
     X(test_node_status_periods)         \
@@ -34,7 +35,8 @@ int g_failures;
     X(test_boot_bad_crc)                \
     X(test_boot_wrong_image)            \
     X(test_boot_presence)               \
-    X(test_boot_unassigned_silent)
+    X(test_boot_unassigned_silent)      \
+    X(test_boot_assign_and_silence)
 
 #define DECLARE(name) void name(void);
 TESTS(DECLARE)

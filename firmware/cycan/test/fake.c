@@ -45,6 +45,7 @@ static bool f_write(void *ctx, uint8_t region, uint32_t off, const void *buf, ui
         if (f->region[region][off + i] != 0xFFu) return false;
     memcpy(f->region[region] + off, buf, len);
     f->writes++;
+    f->nsent_at_write[region] = f->nsent;
     return true;
 }
 
@@ -101,6 +102,14 @@ static bool f_flash_read(void *ctx, uint32_t off, uint8_t *data, uint32_t len)
     return true;
 }
 
+static bool f_identity_save(void *ctx, uint8_t num)
+{
+    fake_t *f = (fake_t *)ctx;
+    f->saved_num = num;
+    f->nsent_at_write[0] = f->nsent;
+    return true;
+}
+
 static void f_start(void *ctx)
 {
     ((fake_t *)ctx)->app_starts++;
@@ -134,6 +143,7 @@ void fake_init(fake_t *f, uint8_t uid_seed)
     f->boot_hal.start_app = f_start;
     f->boot_hal.led_set = f_led;
     f->boot_hal.random = f_rand;
+    f->boot_hal.identity_save = f_identity_save;
 }
 
 void fake_clear(fake_t *f)

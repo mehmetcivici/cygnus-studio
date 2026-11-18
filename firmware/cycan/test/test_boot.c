@@ -179,6 +179,26 @@ void test_boot_out_of_order(void)
     end();
     CHECK(last_ack(&a) && a.status == CYCAN_FWST_OK);
     CHECK(memcmp(fk.flash, image, sizeof image) == 0);
+
+    /* After BAD_OFFSET the window restarts: resuming at next_offset, the first OK comes
+     * after exactly `window` good frames. */
+    {
+        uint32_t resume = (uint32_t)drop * CYCAN_FW_CHUNK_CLASSIC, off;
+        int k;
+        setup(2);
+        begin((uint32_t)sizeof image, cycan_crc32(image, sizeof image));
+        for (k = 0, off = 0; k < drop; k++, off += CYCAN_FW_CHUNK_CLASSIC) data(off, CYCAN_FW_CHUNK_CLASSIC);
+        data(off + CYCAN_FW_CHUNK_CLASSIC, CYCAN_FW_CHUNK_CLASSIC); /* stray */
+        fake_clear(&fk);
+        for (k = 0; k < (int)CYCAN_FW_WINDOW_DEFAULT - 1; k++) data(resume + (uint32_t)k * CYCAN_FW_CHUNK_CLASSIC, CYCAN_FW_CHUNK_CLASSIC);
+        CHECK_EQ(acks(CYCAN_FWST_OK), 0);
+        data(resume + (CYCAN_FW_WINDOW_DEFAULT - 1u) * CYCAN_FW_CHUNK_CLASSIC, CYCAN_FW_CHUNK_CLASSIC);
+        CHECK_EQ(acks(CYCAN_FWST_OK), 1);
+        send_all(CYCAN_FW_CHUNK_CLASSIC, resume + CYCAN_FW_WINDOW_DEFAULT * CYCAN_FW_CHUNK_CLASSIC, -1);
+        fake_clear(&fk);
+        end();
+        CHECK(last_ack(&a) && a.status == CYCAN_FWST_OK);
+    }
 }
 
 void test_boot_bad_crc(void)
@@ -314,4 +334,58 @@ void test_boot_unassigned_silent(void)
     cycan_boot_init(&bl, &cfg, &fk.boot_hal, now);
     run_boot_ms(&bl, &now, 1500);
     CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, 0xFF), 0);
+}
+
+void test_boot_assign_and_silence(void)
+{
+    cycan_frame_t f;
+    cycan_assign_id_t a;
+    cycan_enum_rsp_t r;
+    cycan_command_t c;
+    cycan_param_get_t g;
+    cycan_info_req_t ir;
+    const cycan_frame_t *rf;
+    cycan_boot_cfg_t cfg;
+    setup(1);
+    cfg = bl.cfg;
+    cfg.num = CYCAN_NUM_UNASSIGNED;
+    cycan_boot_init(&bl, &cfg, &fk.boot_hal, now);
+    a.uid48 = bl.uid.uid48;
+    a.new_num = 7;
+    a.persist = true;
+    cycan_enc_assign_id(&f, 0, 0, &a);
+    to_boot(&bl, &f);
+    run_boot_ms(&bl, &now, 1);
+    rf = fake_find(&fk, CYCAN_CLS_ENUM_RSP, 0xFF, 0);
+    CHECK(rf != NULL && cycan_dec_enum_rsp(rf->data, rf->len, &r) && r.num == 7 && r.bootloader);
+    CHECK_EQ(fk.saved_num, 7);
+    CHECK_EQ(fk.nsent_at_write[0], 1);
+    run_boot_ms(&bl, &now, 10);
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_HEARTBEAT), 1);
+
+    /* Everything outside the bootloader's set stays unanswered. */
+    fake_clear(&fk);
+    c.cmd = CYCAN_CMD_SAVE_PARAMS;
+    c.arg = 0;
+    cycan_enc_command(&f, DT, 7, &c);
+    to_boot(&bl, &f);
+    c.cmd = CYCAN_CMD_ENTER_BOOTLOADER;
+    cycan_enc_command(&f, DT, 7, &c);
+    to_boot(&bl, &f);
+    g.pid = CYCAN_PID_CAN_DATA_BITRATE;
+    cycan_enc_param_get(&f, DT, 7, &g);
+    to_boot(&bl, &f);
+    run_boot_ms(&bl, &now, 1);
+    ir.page = 3;
+    cycan_enc_info_req(&f, DT, 7, &ir);
+    to_boot(&bl, &f);
+    cycan_enc_fault_req(&f, DT, 7);
+    to_boot(&bl, &f);
+    run_boot_ms(&bl, &now, 1);
+    CHECK_EQ(fk.nsent, 0);
+    ir.page = 0;
+    cycan_enc_info_req(&f, DT, 7, &ir);
+    to_boot(&bl, &f);
+    run_boot_ms(&bl, &now, 1);
+    CHECK_EQ(fake_count(&fk, CYCAN_CLS_SYS_RSP, CYCAN_SYS_INFO_RSP), 1);
 }

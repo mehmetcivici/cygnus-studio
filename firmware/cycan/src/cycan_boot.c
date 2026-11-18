@@ -37,10 +37,12 @@ static void send(cycan_boot_t *b, const cycan_frame_t *f)
     (void)b->hal->can_send(b->hal->ctx, f);
 }
 
+/* Every ACK, whatever its status, restarts the window count (PROTOCOL 9). */
 static void ack(cycan_boot_t *b, uint8_t status)
 {
     cycan_frame_t f;
     cycan_fw_ack_t m;
+    b->since_ack = 0;
     m.status = status;
     m.window = window(b);
     m.next_offset = b->next_offset;
@@ -48,7 +50,7 @@ static void ack(cycan_boot_t *b, uint8_t status)
     send(b, &f);
 }
 
-static void send_enum_rsp(cycan_boot_t *b)
+static void send_enum_rsp(cycan_boot_t *b, bool ack_assign)
 {
     cycan_frame_t f;
     cycan_enum_rsp_t m;
@@ -59,7 +61,7 @@ static void send_enum_rsp(cycan_boot_t *b)
     m.model = b->cfg.model;
     cycan_enc_enum_rsp(&f, b->cfg.devtype, &m);
     b->enum_pending = false;
-    if (!b->hal->can_send(b->hal->ctx, &f) && !b->enum_retried) {
+    if (!b->hal->can_send(b->hal->ctx, &f) && !b->enum_retried && !ack_assign) {
         uint32_t r = b->hal->random != NULL ? b->hal->random(b->hal->ctx) : (uint32_t)b->uid.uid48 ^ b->now;
         b->enum_retried = true;
         b->enum_pending = true;
@@ -203,10 +205,7 @@ static void on_data(cycan_boot_t *b, const uint8_t *d, uint8_t len)
         }
         b->header_ok = true;
     }
-    if (++b->since_ack >= window(b)) {
-        b->since_ack = 0;
-        ack(b, CYCAN_FWST_OK);
-    }
+    if (++b->since_ack >= window(b)) ack(b, CYCAN_FWST_OK);
 }
 
 static void on_end(cycan_boot_t *b)
@@ -280,6 +279,18 @@ static void on_sys(cycan_boot_t *b, uint8_t index, const uint8_t *d, uint8_t len
         }
         break;
     }
+    case CYCAN_SYS_ASSIGN_ID: {
+        cycan_assign_id_t m;
+        if (!cycan_dec_assign_id(d, len, &m) || m.uid48 != b->uid.uid48 || m.new_num < CYCAN_NUM_MIN ||
+            m.new_num > CYCAN_NUM_UNASSIGNED)
+            return;
+        b->cfg.num = m.new_num;
+        b->enum_pending = false;
+        send_enum_rsp(b, true);
+        if (m.persist && b->hal->identity_save != NULL) (void)b->hal->identity_save(b->hal->ctx, m.new_num);
+        b->hb_next = b->now;
+        break;
+    }
     case CYCAN_SYS_IDENTIFY: {
         cycan_identify_t m;
         if (cycan_dec_identify(d, len, &m) && (m.uid_form ? m.uid48 == b->uid.uid48 : assigned(b))) identify(b, m.seconds);
@@ -313,20 +324,15 @@ static void on_sys(cycan_boot_t *b, uint8_t index, const uint8_t *d, uint8_t len
     case CYCAN_SYS_COMMAND: {
         cycan_command_t m;
         cycan_command_rsp_t r;
-        if (!assigned(b) || !cycan_dec_command(d, len, &m)) return;
+        /* Only REBOOT is answered; everything else stays unanswered (PROTOCOL 9). */
+        if (!assigned(b) || !cycan_dec_command(d, len, &m) || m.cmd != CYCAN_CMD_REBOOT) return;
         r.cmd = m.cmd;
         r.result = 0;
-        if (m.cmd == CYCAN_CMD_ENTER_BOOTLOADER) {
-            r.status = CYCAN_CMDST_OK;
-        } else if (m.cmd == CYCAN_CMD_REBOOT) {
-            /* Leaving the bootloader only makes sense with a valid image to start. */
-            r.status = cycan_boot_image_valid(b) ? CYCAN_CMDST_OK : CYCAN_CMDST_FAILED;
-            if (r.status == CYCAN_CMDST_OK) {
-                b->start_pending = true;
-                b->start_at = b->now + CYCAN_BOOT_START_DELAY_US;
-            }
-        } else {
-            r.status = CYCAN_CMDST_UNSUPPORTED;
+        /* Leaving the bootloader only makes sense with a valid image to start. */
+        r.status = cycan_boot_image_valid(b) ? CYCAN_CMDST_OK : CYCAN_CMDST_FAILED;
+        if (r.status == CYCAN_CMDST_OK) {
+            b->start_pending = true;
+            b->start_at = b->now + CYCAN_BOOT_START_DELAY_US;
         }
         cycan_enc_command_rsp(&f, b->cfg.devtype, b->cfg.num, &r);
         send(b, &f);
@@ -418,7 +424,7 @@ void cycan_boot_poll(cycan_boot_t *b, uint32_t now_us)
             abort_update(b, CYCAN_FWST_FLASH_ERROR);
         }
     }
-    if (b->enum_pending && due(b->now, b->enum_due)) send_enum_rsp(b);
+    if (b->enum_pending && due(b->now, b->enum_due)) send_enum_rsp(b, false);
     if (assigned(b) && due(b->now, b->hb_next)) {
         send_heartbeat(b);
         b->hb_next += MS(CYCAN_HEARTBEAT_MS);

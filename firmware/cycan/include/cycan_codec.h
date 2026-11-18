@@ -152,6 +152,8 @@ extern "C" {
 #define CYCAN_STREAM_TIMEOUT_MS 2000u
 #define CYCAN_CTRL_TIMEOUT_DEFAULT_MS 200u
 #define CYCAN_ENUM_RETRY_MAX_MS 100u
+#define CYCAN_CONFLICT_ANNOUNCE_MAX_MS 20u
+#define CYCAN_ASSIGN_ACK_MAX_MS 50u
 
 /* ---- Frame ----------------------------------------------------------------------- */
 
