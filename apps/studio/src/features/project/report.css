@@ -1,0 +1,146 @@
+/* Printable report: fixed paper colours so screen, print and the downloaded file match. */
+.rp {
+  box-sizing: border-box;
+  background: #fff;
+  color: #14213d;
+  font: 12.5px/1.45 Lato, 'Segoe UI', system-ui, sans-serif;
+  padding: 32px 36px;
+  width: 100%;
+  max-width: 820px;
+}
+.rp * {
+  box-sizing: border-box;
+}
+.rp .mono {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.rp-muted {
+  color: #5b6b88;
+}
+.rp-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 3px solid #1a8fb8;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+}
+.rp-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #1a8fb8;
+}
+.rp h1 {
+  margin: 2px 0 2px;
+  font-size: 24px;
+  line-height: 1.15;
+}
+.rp-project {
+  font-size: 15px;
+  font-weight: 700;
+}
+.rp-meta {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  text-align: right;
+}
+.rp-meta dt {
+  color: #5b6b88;
+  display: inline;
+}
+.rp-meta dt::after {
+  content: ': ';
+}
+.rp-meta dd {
+  margin: 0;
+  display: inline;
+}
+.rp-meta div {
+  display: block;
+}
+.rp-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.rp-summary div {
+  border: 1px solid #d5deeb;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f4f7fb;
+}
+.rp-summary b {
+  display: block;
+  font-size: 17px;
+}
+.rp-summary span {
+  color: #5b6b88;
+  font-size: 11px;
+}
+.rp h2 {
+  font-size: 14px;
+  margin: 20px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #d5deeb;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0e4f6b;
+}
+.rp h3 {
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.rp-card {
+  margin-bottom: 14px;
+  break-inside: avoid;
+}
+.rp-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.rp-table th,
+.rp-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid #e3e9f2;
+  vertical-align: top;
+}
+.rp-table th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5b6b88;
+  background: #f4f7fb;
+}
+.rp-table .is-num {
+  text-align: right;
+}
+.rp-table tr {
+  break-inside: avoid;
+}
+.rp-notes {
+  white-space: pre-wrap;
+}
+.rp-foot {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid #d5deeb;
+  font-size: 10.5px;
+  color: #5b6b88;
+}
+@media print {
+  .rp {
+    padding: 0;
+    max-width: none;
+  }
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+}
