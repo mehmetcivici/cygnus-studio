@@ -18,35 +18,55 @@ static void f_uid(void *ctx, uint8_t out[12])
     memcpy(out, ((fake_t *)ctx)->uid96, 12);
 }
 
-static bool f_read(void *ctx, uint8_t region, uint32_t off, void *buf, uint32_t len)
+static bool f_read(void *ctx, uint8_t slot, uint32_t off, void *buf, uint32_t len)
 {
     fake_t *f = (fake_t *)ctx;
-    if (region > 1u || off + len > FAKE_REGION_SIZE) return false;
-    memcpy(buf, f->region[region] + off, len);
+    if (f->dead || slot > 1u || off > FAKE_REGION_SIZE || len > FAKE_REGION_SIZE - off) return false;
+    memcpy(buf, f->region[slot] + off, len);
     return true;
 }
 
-static bool f_erase(void *ctx, uint8_t region)
+static bool f_erase(void *ctx, uint8_t slot)
 {
     fake_t *f = (fake_t *)ctx;
-    if (region > 1u) return false;
-    memset(f->region[region], 0xFF, FAKE_REGION_SIZE);
+    if (f->dead || slot > 1u) return false;
+    if (f->cut_budget == 0) {
+        memset(f->region[slot], 0xFF, FAKE_REGION_SIZE / 2u);
+        f->dead = true;
+        return false;
+    }
+    memset(f->region[slot], 0xFF, FAKE_REGION_SIZE);
     f->erases++;
     return true;
 }
 
-static bool f_write(void *ctx, uint8_t region, uint32_t off, const void *buf, uint32_t len)
+static bool f_write(void *ctx, uint8_t slot, uint32_t off, const void *buf, uint32_t len)
 {
     fake_t *f = (fake_t *)ctx;
-    uint32_t i;
+    uint32_t i, n = len;
     /* Enforce the HAL contract: 8-byte aligned blocks into erased storage. */
-    if (region > 1u || off + len > FAKE_REGION_SIZE || off % 8u != 0u || len % 8u != 0u) return false;
+    if (f->dead || slot > 1u || off > FAKE_REGION_SIZE || len > FAKE_REGION_SIZE - off || off % 8u != 0u || len % 8u != 0u)
+        return false;
     for (i = 0; i < len; i++)
-        if (f->region[region][off + i] != 0xFFu) return false;
-    memcpy(f->region[region] + off, buf, len);
+        if (f->region[slot][off + i] != 0xFFu) return false;
+    if (f->cut_budget >= 0 && (long)len > f->cut_budget) n = (uint32_t)f->cut_budget;
+    memcpy(f->region[slot] + off, buf, n);
+    f->programmed += (long)n;
+    if (f->cut_budget >= 0) f->cut_budget -= (long)n;
+    if (n < len) {
+        f->dead = true;
+        return false;
+    }
     f->writes++;
-    f->nsent_at_write[region] = f->nsent;
+    f->nsent_at_store = f->nsent;
     return true;
+}
+
+static void f_can_config(void *ctx, uint8_t rate)
+{
+    fake_t *f = (fake_t *)ctx;
+    f->can_configs++;
+    f->can_bitrate = rate;
 }
 
 static void f_reboot(void *ctx)
@@ -102,14 +122,6 @@ static bool f_flash_read(void *ctx, uint32_t off, uint8_t *data, uint32_t len)
     return true;
 }
 
-static bool f_identity_save(void *ctx, uint8_t num)
-{
-    fake_t *f = (fake_t *)ctx;
-    f->saved_num = num;
-    f->nsent_at_write[0] = f->nsent;
-    return true;
-}
-
 static void f_start(void *ctx)
 {
     ((fake_t *)ctx)->app_starts++;
@@ -123,6 +135,7 @@ void fake_init(fake_t *f, uint8_t uid_seed)
     memset(f->region, 0xFF, sizeof f->region);
     memset(f->flash, 0xFF, sizeof f->flash);
     f->rnd = uid_seed;
+    f->cut_budget = -1;
     f->hal.ctx = f;
     f->hal.can_send = f_send;
     f->hal.uid96 = f_uid;
@@ -143,7 +156,10 @@ void fake_init(fake_t *f, uint8_t uid_seed)
     f->boot_hal.start_app = f_start;
     f->boot_hal.led_set = f_led;
     f->boot_hal.random = f_rand;
-    f->boot_hal.identity_save = f_identity_save;
+    f->boot_hal.can_config = f_can_config;
+    f->boot_hal.storage_read = f_read;
+    f->boot_hal.storage_erase = f_erase;
+    f->boot_hal.storage_write = f_write;
 }
 
 void fake_clear(fake_t *f)

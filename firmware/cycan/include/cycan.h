@@ -3,23 +3,29 @@
  *
  * The library implements the whole protocol of docs/PROTOCOL.md for one board: discovery,
  * address assignment and conflict handling, heartbeat, identify, info pages, names,
- * parameters with persistence, status scheduling, streaming, faults, ESTOP, the CTRL
- * watchdog and common commands. The port supplies a small HAL (cycan_hal_t) and the board
- * firmware an application table (cycan_app_t).
+ * parameters with power-loss safe persistence, status scheduling, streaming, faults, ESTOP,
+ * the CTRL watchdog and the neutral-first rule, and the common commands. The port supplies
+ * a small HAL (cycan_hal_t) and the board firmware an application table (cycan_app_t).
  *
  * Execution model
  * - cycan_on_frame() may be called from the CAN RX interrupt. It only filters the id and
- *   copies the frame into a single-producer / single-consumer ring (plus a latched ESTOP
- *   flag that survives a full ring). It calls no HAL or application callback.
+ *   copies the frame into a single-producer / single-consumer ring; ESTOP bumps a counter
+ *   that survives a full ring. It calls no HAL or application callback.
  * - cycan_on_tx_error() may also be called from an interrupt; it only sets a flag.
  * - Everything else (cycan_poll() and every other API function) must run in one context,
  *   normally the main loop or a 1 kHz task. Every HAL and application callback is invoked
  *   from cycan_poll() or from the API function the application called, never from
  *   cycan_on_frame(). No function is reentrant with itself; callbacks must not call
  *   cycan_poll().
- * - Time is passed in as a free-running 32-bit microsecond counter (wraps every ~71 min;
- *   all comparisons are wrap safe). Call cycan_poll() at least every 1 ms; boards that
- *   stream faster than 1 kHz must poll at least as often as their stream period.
+ *
+ * Time
+ * - `now_us` is a free-running 32-bit microsecond counter that wraps every 71.6 min. The
+ *   library only ever looks at differences (now - then), so the wrap is harmless as long as
+ *   cycan_poll() runs at least every 2^31 us (35 min); in practice it runs every 1 ms.
+ * - STREAM t_100us comes from a separate 100 us accumulator, so it advances evenly across
+ *   the 32-bit wrap (PROTOCOL 8).
+ * - Call cycan_poll() at least every 1 ms; boards that stream faster than 1 kHz must poll at
+ *   least as often as their stream period.
  *
  * Memory: no dynamic allocation and no globals; all state lives in cycan_node_t. The
  * application and parameter tables are const and can live in flash.
@@ -31,18 +37,28 @@
 #include <stdint.h>
 
 #include "cycan_codec.h"
+#include "cycan_store.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* Common command 8 (PROTOCOL 4.5); older generated catalogs do not define it yet. */
+#ifndef CYCAN_CMD_LOAD_SAVED
+#define CYCAN_CMD_LOAD_SAVED 8u
+#endif
+
 /* ---- Build-time sizing ----------------------------------------------------------- */
 
+/* RX ring: absorbs a host burst (15 stream CONFIG + START) and ~20 ms of traffic while a
+ * flash erase stalls the CPU. Power of two, <= 128. */
 #ifndef CYCAN_RX_QUEUE_LEN
-#define CYCAN_RX_QUEUE_LEN 8u /* power of two, <= 128 */
+#define CYCAN_RX_QUEUE_LEN 16u
 #endif
+/* Frames held while the controller's TX FIFO is full: one poll can emit a heartbeat, several
+ * STATUS frames and up to 4 classic STREAM frames. Each entry is sizeof(cycan_frame_t). */
 #ifndef CYCAN_TX_QUEUE_LEN
-#define CYCAN_TX_QUEUE_LEN 4u /* frames held while the controller's TX FIFO is full */
+#define CYCAN_TX_QUEUE_LEN 16u
 #endif
 #ifndef CYCAN_STATUS_MAX
 #define CYCAN_STATUS_MAX 16u /* STATUS frame numbers 0..15 */
@@ -51,6 +67,11 @@ extern "C" {
  * leaves the controller first. */
 #ifndef CYCAN_RESET_DELAY_US
 #define CYCAN_RESET_DELAY_US 5000ul
+#endif
+/* A lost frame (RX ring overrun or TX queue overflow) shows as a CAN_ERR warning for this
+ * long after the last loss. */
+#ifndef CYCAN_CAN_ERR_HOLD_MS
+#define CYCAN_CAN_ERR_HOLD_MS 1000u
 #endif
 
 /* ---- Parameters ------------------------------------------------------------------ */
@@ -71,7 +92,7 @@ typedef struct cycan_param cycan_param_t;
  * 4-byte storage of the parameter's C type (uint32_t for u32/enum/bool, int32_t, float);
  * the library is the only writer while the node runs. `min_nonzero` != 0 means "0 or at
  * least min_nonzero in magnitude" (status periods). `on_change` (optional) runs after a
- * new value has been stored by SET, LOAD_DEFAULTS or the boot-time load.
+ * new value has been stored by SET, LOAD_DEFAULTS, LOAD_SAVED or the boot-time load.
  */
 struct cycan_param {
     uint16_t pid;
@@ -126,27 +147,25 @@ struct cycan_param {
 
 /* ---- HAL ------------------------------------------------------------------------- */
 
-/** Persistent storage regions. Each is erased and rewritten as a whole. */
-#define CYCAN_REGION_IDENTITY 0u /* 8 bytes: assigned NUM */
-#define CYCAN_REGION_PARAMS 1u   /* cycan_params_blob_size() bytes: name + parameter values */
-#define CYCAN_IDENTITY_SIZE 8u
-
 typedef struct {
     void *ctx; /* passed back to every callback */
     /**
      * Queue one frame for transmission (29-bit id; CYCAN_FRAME_FD / _BRS in flags).
-     * Return false if the controller cannot take it now; the library then retries from a
-     * small queue (ENUM_RSP instead gets one randomized retry, PROTOCOL 3.2).
+     * Return false if the controller cannot take it now; the library then retries from its
+     * TX queue (ENUM_RSP instead gets one randomized retry, PROTOCOL 3.2).
      */
     bool (*can_send)(void *ctx, const cycan_frame_t *f);
     /** The MCU's 96-bit unique id in INFO page byte order (read once in cycan_init). */
     void (*uid96)(void *ctx, uint8_t out[12]);
-    /** Storage access. Writes come after an erase, in increasing offsets, 8-byte aligned and
-     * in multiples of 8 bytes. Erased storage must read back as 0xFF. All may be NULL
-     * (nothing persists, defaults are used). */
-    bool (*storage_read)(void *ctx, uint8_t region, uint32_t offset, void *buf, uint32_t len);
-    bool (*storage_erase)(void *ctx, uint8_t region);
-    bool (*storage_write)(void *ctx, uint8_t region, uint32_t offset, const void *buf, uint32_t len);
+    /**
+     * Two storage slots, CYCAN_STORE_SLOT_A and _B, each at least
+     * cycan_store_slot_size(app) bytes (see cycan_store.h for the contract). Erase sets a
+     * whole slot to 0xFF; writes are 8-byte aligned blocks into erased storage, in any
+     * order. All three may be NULL (nothing persists, defaults are used, NUM stays 63).
+     */
+    bool (*storage_read)(void *ctx, uint8_t slot, uint32_t offset, void *buf, uint32_t len);
+    bool (*storage_erase)(void *ctx, uint8_t slot);
+    bool (*storage_write)(void *ctx, uint8_t slot, uint32_t offset, const void *buf, uint32_t len);
     /** Do not return. */
     void (*reboot)(void *ctx);
     void (*enter_bootloader)(void *ctx);
@@ -159,12 +178,20 @@ typedef struct {
 /* ---- Application ----------------------------------------------------------------- */
 
 typedef enum {
-    CYCAN_NEUTRAL_CTRL_TIMEOUT = 0, /* no CTRL within ctrl.timeout_ms */
+    CYCAN_NEUTRAL_CTRL_TIMEOUT = 0, /* no valid CTRL within ctrl.timeout_ms */
     CYCAN_NEUTRAL_ESTOP,            /* ESTOP received (latched) */
     CYCAN_NEUTRAL_CONFLICT,         /* address conflict detected */
     CYCAN_NEUTRAL_UNASSIGNED,       /* address changed by ASSIGN_ID */
-    CYCAN_NEUTRAL_RESET             /* about to reboot or enter the bootloader */
+    CYCAN_NEUTRAL_RESET,            /* about to reboot or enter the bootloader */
+    CYCAN_NEUTRAL_FAULT             /* an active fault was raised */
 } cycan_neutral_reason_t;
+
+/** What a CTRL frame asks for (return value of cycan_app_t.ctrl). */
+typedef enum {
+    CYCAN_CTRL_INVALID = 0, /* unknown index, wrong length, bad value: nothing applied */
+    CYCAN_CTRL_NEUTRAL,     /* the model's neutral command (PROTOCOL 7) */
+    CYCAN_CTRL_DRIVE        /* anything else */
+} cycan_ctrl_t;
 
 typedef struct {
     /* Identity (catalog constants). */
@@ -180,7 +207,7 @@ typedef struct {
 
     /** The board can send CAN-FD frames (false: classic only, whatever can.data_bitrate says). */
     bool fd_capable;
-    /** Smallest stream period (catalog stream.minPeriodUs). */
+    /** Smallest stream period (catalog stream.minPeriodUs); periods are rounded to multiples of it. */
     uint32_t stream_min_period_us;
     /** Number of STATUS frames (catalog statusFrames). */
     uint8_t status_count;
@@ -192,12 +219,28 @@ typedef struct {
     bool (*status_fill)(cycan_node_t *node, uint8_t n, uint8_t out[8]);
     /** Current value of signal `sid` for STREAM; false if unknown (sent as NaN). */
     bool (*signal_read)(cycan_node_t *node, uint16_t sid, float *out);
-    /** CTRL/index frame (only when the board is addressed and not in ESTOP/CONFLICT). */
-    void (*ctrl)(cycan_node_t *node, uint8_t index, const uint8_t *data, uint8_t len);
+    /**
+     * CTRL/index frame addressed to this board (never a broadcast), only while the board is
+     * assigned, out of conflict, not in ESTOP and without an active fault.
+     *
+     * Decode and classify the frame and return what it is:
+     * - CYCAN_CTRL_INVALID: unknown index, wrong length or value. Apply nothing.
+     * - CYCAN_CTRL_NEUTRAL: the neutral command. Apply it (actuator to its safe state).
+     * - CYCAN_CTRL_DRIVE:   apply it ONLY when `armed` is true, then call
+     *                       cycan_set_enabled(node, true). With `armed` false apply nothing.
+     *
+     * `armed` is true once a NEUTRAL command for this index has been seen since the last
+     * event that forced the board neutral (power-up, ESTOP and its clearing, CTRL timeout,
+     * active fault, conflict, NUM change): the neutral-first rule of PROTOCOL 7. Only
+     * NEUTRAL and applied DRIVE frames feed the ctrl.timeout_ms watchdog.
+     */
+    cycan_ctrl_t (*ctrl)(cycan_node_t *node, uint8_t index, const uint8_t *data, uint8_t len, bool armed);
     /**
      * SELF_TEST and model commands (0x40+). Return a CYCAN_CMDST_* status and set *result.
      * Return CYCAN_CMDST_IN_PROGRESS for long operations and finish later with
-     * cycan_command_finish(). NULL: every such command is UNSUPPORTED.
+     * cycan_command_finish(). An ESTOP ends a running command with FAILED (the library
+     * answers; the application aborts it in neutral(ESTOP)). NULL: every such command is
+     * UNSUPPORTED.
      */
     uint8_t (*command)(cycan_node_t *node, uint8_t cmd, uint32_t arg, uint32_t *result);
     /** Put every actuator in its safe state now. Required for actuator boards. */
@@ -211,6 +254,7 @@ typedef struct {
 typedef struct {
     uint32_t id;
     uint8_t len;
+    uint8_t estop_seq; /* ESTOP counter when the frame arrived (ESTOP / CLEAR_ESTOP order) */
     uint8_t data[8];
 } cycan_rx_entry_t;
 
@@ -222,13 +266,16 @@ struct cycan_node {
     cycan_uid_t uid;
     uint8_t uid96[12];
     uint8_t num;
+    uint8_t stored_num; /* NUM in the store (what a reboot would come up with) */
     bool conflict;
     bool estop;
     bool enabled;
-    bool unsaved;
     bool fd_active;
+    bool boot_heartbeat; /* next heartbeat reports state BOOT (PROTOCOL 4.1) */
+    bool in_neutral;
     uint8_t data_bitrate; /* value in effect since boot */
     char name[CYCAN_NAME_BYTES];
+    uint32_t ram_crc, saved_crc; /* UNSAVED = parameters/name differ from the stored copy */
 
     uint16_t fault_active, fault_sticky, fault_warn;
 
@@ -243,7 +290,8 @@ struct cycan_node {
     bool enum_pending, enum_retried;
     uint32_t enum_due;
 
-    bool ctrl_armed;
+    uint16_t ctrl_armed; /* bit per CTRL index: neutral seen since the last forced neutral */
+    bool ctrl_watch;
     uint32_t ctrl_last;
 
     uint32_t identify_end, identify_next;
@@ -256,6 +304,8 @@ struct cycan_node {
     bool stream_active;
     uint8_t stream_seq;
     uint32_t stream_period_us, stream_next, stream_keepalive;
+    uint16_t t100;    /* STREAM t_100us */
+    uint8_t t100_rem; /* microseconds not yet counted into t100 */
 
     bool cmd_pending;
     uint8_t cmd_code;
@@ -263,10 +313,17 @@ struct cycan_node {
     uint8_t reset_pending; /* 0, CYCAN_CMD_REBOOT or CYCAN_CMD_ENTER_BOOTLOADER */
     uint32_t reset_at;
 
+    uint16_t seen_overruns, seen_dropped;
+    bool can_err_held; /* CAN_ERR warning raised by the library for lost frames */
+    uint32_t can_err_until;
+
+    uint8_t estop_seen; /* last estop_seq latched */
+    bool estop_this_turn;
+
     /* Interrupt-shared state. */
     cycan_rx_entry_t rxq[CYCAN_RX_QUEUE_LEN];
     volatile uint8_t rx_head, rx_tail;
-    volatile uint8_t estop_rx;
+    volatile uint8_t estop_seq;
     volatile uint8_t enum_tx_err;
     volatile uint16_t rx_overruns;
 
@@ -277,17 +334,18 @@ struct cycan_node {
 
 typedef enum {
     CYCAN_INIT_OK = 0,
-    CYCAN_INIT_STORAGE_BLANK, /* first boot: factory defaults, unassigned */
-    CYCAN_INIT_STORAGE_CORRUPT, /* parameter CRC failed: defaults, PARAM_CRC warning */
-    CYCAN_INIT_BAD_TABLE      /* NULL value pointer, duplicate pid or invalid default */
+    CYCAN_INIT_STORAGE_BLANK,   /* nothing stored: factory defaults, unassigned */
+    CYCAN_INIT_STORAGE_CORRUPT, /* no valid copy in either slot: defaults, NUM 63, PARAM_CRC active */
+    CYCAN_INIT_BAD_TABLE        /* NULL value pointer, duplicate pid or invalid default */
 } cycan_init_result_t;
 
 /* ---- API ------------------------------------------------------------------------- */
 
 /**
- * Derives the UID values, loads defaults, then the stored NUM and parameters, and
- * schedules the first heartbeat. The node is fully usable for any result except
- * CYCAN_INIT_BAD_TABLE. Read cycan_data_bitrate() afterwards to configure the controller.
+ * Derives the UID values, loads defaults, then the newest valid stored copy (NUM, name,
+ * parameters), and schedules the first heartbeat (state BOOT, within 100 ms). The node is
+ * fully usable for any result except CYCAN_INIT_BAD_TABLE. Read cycan_data_bitrate()
+ * afterwards to configure the controller.
  */
 cycan_init_result_t cycan_init(cycan_node_t *node, const cycan_app_t *app, const cycan_hal_t *hal, void *user,
                                uint32_t now_us);
@@ -304,17 +362,21 @@ uint8_t cycan_num(const cycan_node_t *node);
 const cycan_uid_t *cycan_uid(const cycan_node_t *node);
 /** can.data_bitrate in effect since boot (0 classic, 1 2M, 2 5M, 3 8M). */
 uint8_t cycan_data_bitrate(const cycan_node_t *node);
-/** Assigned, not in conflict and not in ESTOP: CTRL frames are delivered. */
+/** Assigned, not in conflict, not in ESTOP and no active fault: CTRL frames are delivered. */
 bool cycan_ctrl_allowed(const cycan_node_t *node);
 bool cycan_estop_latched(const cycan_node_t *node);
 bool cycan_identify_active(const cycan_node_t *node);
+bool cycan_unsaved(const cycan_node_t *node);
 const char *cycan_name(const cycan_node_t *node, uint8_t *len);
 
 /** The application reports whether an actuator is being driven (HEARTBEAT ENABLED / ACTIVE). */
 void cycan_set_enabled(cycan_node_t *node, bool enabled);
 
 typedef enum { CYCAN_FAULT_ACTIVE = 0, CYCAN_FAULT_WARN } cycan_fault_kind_t;
-/** ACTIVE sets the active and the sticky bit; WARN sets the warn bit. Bits 0..15. */
+/**
+ * ACTIVE sets the active and the sticky bit; a newly active fault forces the board neutral
+ * (neutral(FAULT)) and CTRL stays blocked until it clears. WARN sets the warn bit. Bits 0..15.
+ */
 void cycan_fault_set(cycan_node_t *node, uint8_t bit, cycan_fault_kind_t kind);
 /** Clears the active or warn bit; sticky bits clear only with COMMAND CLEAR_FAULTS. */
 void cycan_fault_clear(cycan_node_t *node, uint8_t bit, cycan_fault_kind_t kind);
@@ -328,9 +390,9 @@ bool cycan_param_get(const cycan_node_t *node, uint16_t pid, cycan_pval_t *out);
 /** Local write with the same checks as a host SET; returns a CYCAN_PST_* status. */
 uint8_t cycan_param_set(cycan_node_t *node, uint16_t pid, uint8_t ptype, cycan_pval_t v);
 
-/** Bytes needed in CYCAN_REGION_PARAMS for this application. */
-uint32_t cycan_params_blob_size(const cycan_app_t *app);
-/** Same as COMMAND SAVE_PARAMS; true on success. */
+/** Bytes each storage slot needs for this application. */
+uint32_t cycan_store_slot_size(const cycan_app_t *app);
+/** Same as COMMAND SAVE_PARAMS (refused while enabled: the flash erase stalls the CPU). */
 bool cycan_save(cycan_node_t *node);
 
 typedef struct {
@@ -338,12 +400,6 @@ typedef struct {
     uint16_t tx_dropped;
 } cycan_stats_t;
 void cycan_stats(const cycan_node_t *node, cycan_stats_t *out);
-
-/* ---- Identity record (shared with the bootloader) -------------------------------- */
-
-void cycan_identity_encode(uint8_t out[CYCAN_IDENTITY_SIZE], uint8_t num);
-/** NUM stored in the record, or CYCAN_NUM_UNASSIGNED if blank / invalid. */
-uint8_t cycan_identity_decode(const uint8_t in[CYCAN_IDENTITY_SIZE]);
 
 #ifdef __cplusplus
 }

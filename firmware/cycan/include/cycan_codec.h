@@ -139,9 +139,11 @@ extern "C" {
 #define CYCAN_ESTOP_MAGIC_1 0x70u
 
 #define CYCAN_DATA_BITRATE_CLASSIC 0u
+#define CYCAN_DATA_BITRATE_MAX 3u /* 0 classic, 1 2M, 2 5M, 3 8M */
 
 #define CYCAN_STREAM_SLOTS 15u
 #define CYCAN_STREAM_SID_CLEAR 0xFFFFu
+#define CYCAN_STREAM_CLASSIC_MAX_SLOTS 4u /* PROTOCOL 8: classic mode streams at most 4 slots */
 #define CYCAN_FW_WINDOW_DEFAULT 16u
 #define CYCAN_FW_CHUNK_CLASSIC 5u
 #define CYCAN_FW_CHUNK_FD 61u
@@ -154,6 +156,14 @@ extern "C" {
 #define CYCAN_ENUM_RETRY_MAX_MS 100u
 #define CYCAN_CONFLICT_ANNOUNCE_MAX_MS 20u
 #define CYCAN_ASSIGN_ACK_MAX_MS 50u
+#define CYCAN_BOOT_HEARTBEAT_MAX_MS 100u /* first heartbeat (state BOOT) after power-up */
+#define CYCAN_RECOVERY_WINDOW_MS 150u    /* PROTOCOL 9.0: bootloader listens before starting */
+
+/* ENTER_BOOTLOADER intent (PROTOCOL 4.5): arg = CYCAN_BOOT_INTENT | uid16. */
+#define CYCAN_BOOT_INTENT 0xB0070000ul
+/* PROTOCOL 9.0: broadcast (DEVTYPE 0, NUM 0) ENTER_BOOTLOADER that keeps a booting
+ * bootloader from starting the application. */
+#define CYCAN_BOOT_RECOVERY_ARG 0xB0075AFEul
 
 /* ---- Frame ----------------------------------------------------------------------- */
 
@@ -497,6 +507,10 @@ bool cycan_dec_ctrl_text(const uint8_t *d, uint8_t len, cycan_ctrl_text_t *m);
 #define CYCAN_CYFW_HEADER_SIZE 64u
 #define CYCAN_CYFW_HEADER_VERSION 1u
 #define CYCAN_CYFW_NAME_BYTES 24u
+/* flags bit0: a 64-byte Ed25519 signature follows the payload (v1 bootloaders store it but
+ * do not verify it). */
+#define CYCAN_CYFW_FLAG_SIGNED 0x0001u
+#define CYCAN_CYFW_SIGNATURE_SIZE 64u
 
 typedef struct {
     uint16_t header_ver;
@@ -509,6 +523,7 @@ typedef struct {
     uint32_t payload_size;
     uint32_t payload_crc32;
     uint16_t catalog_rev;
+    uint16_t flags; /* CYCAN_CYFW_FLAG_* */
     uint32_t git_hash;
     uint16_t build_day;
     char name[CYCAN_CYFW_NAME_BYTES + 1];

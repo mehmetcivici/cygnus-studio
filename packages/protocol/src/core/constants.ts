@@ -133,6 +133,8 @@ export const Command = {
   CLEAR_FAULTS: 5,
   SELF_TEST: 6,
   CLEAR_ESTOP: 7,
+  /** Reload persisted parameters into RAM, discarding unsaved changes. */
+  LOAD_SAVED: 8,
 } as const;
 /** First model-specific command code (catalog `actions`). */
 export const MODEL_COMMAND_MIN = 0x40;
@@ -184,6 +186,24 @@ export const NAME_BYTES = 21;
 
 export const ESTOP_MAGIC_0 = 0xe5;
 export const ESTOP_MAGIC_1 = 0x70;
+
+/** ENTER_BOOTLOADER intent: arg must be `ENTER_BOOTLOADER_INTENT | uid16` (PROTOCOL §4.5). */
+export const ENTER_BOOTLOADER_INTENT = 0xb0070000;
+/** Broadcast ENTER_BOOTLOADER arg that keeps a bootloader in its boot-time recovery window (PROTOCOL §9.0). */
+export const RECOVERY_STAY_MAGIC = 0xb0075afe;
+/** Bootloader listens this long at power-up before jumping to the application. */
+export const RECOVERY_WINDOW_MS = 150;
+/** Host repeats the recovery beacon at this interval. */
+export const RECOVERY_BEACON_PERIOD_MS = 20;
+/** A node sends its first heartbeat (state = BOOT) within this time after start-up. */
+export const BOOT_HEARTBEAT_MAX_MS = 100;
+/** Host sends ESTOP this many times, ESTOP_REPEAT_GAP_MS apart. */
+export const ESTOP_REPEAT_COUNT = 3;
+export const ESTOP_REPEAT_GAP_MS = 10;
+/** STREAM slot limit in classic-CAN mode (one frame per slot per sample). */
+export const STREAM_MAX_SLOTS_CLASSIC = 4;
+/** Host refuses to open a stream that would push estimated bus load above this fraction. */
+export const BUS_LOAD_STREAM_LIMIT = 0.8;
 
 /** `can.data_bitrate` enum values. */
 export const DataBitrate = { CLASSIC: 0, M2: 1, M5: 2, M8: 3 } as const;

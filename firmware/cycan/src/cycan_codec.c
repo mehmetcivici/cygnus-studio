@@ -768,6 +768,7 @@ void cycan_cyfw_encode_header(uint8_t out[CYCAN_CYFW_HEADER_SIZE], const cycan_c
     cycan_wr_u32(out + 12, h->payload_size);
     cycan_wr_u32(out + 16, h->payload_crc32);
     cycan_wr_u16(out + 20, h->catalog_rev);
+    cycan_wr_u16(out + 22, h->flags);
     cycan_wr_u32(out + 24, h->git_hash);
     cycan_wr_u16(out + 28, h->build_day);
     put_ascii(out + 32, h->name, CYCAN_CYFW_NAME_BYTES);
@@ -789,6 +790,7 @@ cycan_cyfw_result_t cycan_cyfw_check_header(const uint8_t in[CYCAN_CYFW_HEADER_S
     h.payload_size = cycan_rd_u32(in + 12);
     h.payload_crc32 = cycan_rd_u32(in + 16);
     h.catalog_rev = cycan_rd_u16(in + 20);
+    h.flags = cycan_rd_u16(in + 22);
     h.git_hash = cycan_rd_u32(in + 24);
     h.build_day = cycan_rd_u16(in + 28);
     get_ascii(h.name, in + 32, CYCAN_CYFW_NAME_BYTES);

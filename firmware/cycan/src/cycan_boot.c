@@ -2,8 +2,6 @@
 
 #include <string.h>
 
-#include "cycan.h" /* identity helpers and timing constants shared with the node */
-
 #if defined(__GNUC__)
 #define CYCAN_BARRIER() __asm__ __volatile__("" ::: "memory")
 #else
@@ -14,6 +12,7 @@
 #define MS(x) ((uint32_t)((uint32_t)(x) * 1000u))
 
 typedef char cycan_boot_chunk_is_multiple_of_8[(CYCAN_BOOT_WRITE_CHUNK % 8u) == 0u ? 1 : -1];
+typedef char cycan_boot_chunk_holds_header[CYCAN_BOOT_WRITE_CHUNK >= 8u ? 1 : -1];
 typedef char cycan_boot_rxq_is_power_of_2[(CYCAN_BOOT_RX_QUEUE_LEN & (CYCAN_BOOT_RX_QUEUE_LEN - 1u)) == 0u ? 1 : -1];
 
 static bool due(uint32_t now, uint32_t t)
@@ -23,12 +22,22 @@ static bool due(uint32_t now, uint32_t t)
 
 static bool assigned(const cycan_boot_t *b)
 {
-    return b->cfg.num >= CYCAN_NUM_MIN && b->cfg.num <= CYCAN_NUM_MAX;
+    return b->num >= CYCAN_NUM_MIN && b->num <= CYCAN_NUM_MAX;
 }
 
 static uint8_t window(const cycan_boot_t *b)
 {
     return b->cfg.window != 0u ? b->cfg.window : CYCAN_FW_WINDOW_DEFAULT;
+}
+
+static cycan_store_io_t store_io(const cycan_boot_t *b)
+{
+    cycan_store_io_t io;
+    io.ctx = b->hal->ctx;
+    io.read = b->hal->storage_read;
+    io.erase = b->hal->storage_erase;
+    io.write = b->hal->storage_write;
+    return io;
 }
 
 static void send(cycan_boot_t *b, const cycan_frame_t *f)
@@ -46,7 +55,7 @@ static void ack(cycan_boot_t *b, uint8_t status)
     m.status = status;
     m.window = window(b);
     m.next_offset = b->next_offset;
-    cycan_enc_fw_ack(&f, b->cfg.devtype, b->cfg.num, &m);
+    cycan_enc_fw_ack(&f, b->cfg.devtype, b->num, &m);
     send(b, &f);
 }
 
@@ -55,7 +64,7 @@ static void send_enum_rsp(cycan_boot_t *b, bool ack_assign)
     cycan_frame_t f;
     cycan_enum_rsp_t m;
     m.uid48 = b->uid.uid48;
-    m.num = b->cfg.num;
+    m.num = b->num;
     m.conflict = false;
     m.bootloader = true;
     m.model = b->cfg.model;
@@ -80,7 +89,7 @@ static void send_heartbeat(cycan_boot_t *b)
     m.fw_major = b->app_fw[0];
     m.fw_minor = b->app_fw[1];
     m.fw_patch = b->app_fw[2];
-    cycan_enc_heartbeat(&f, b->cfg.devtype, b->cfg.num, &m);
+    cycan_enc_heartbeat(&f, b->cfg.devtype, b->num, &m);
     send(b, &f);
 }
 
@@ -104,11 +113,11 @@ static bool wbuf_flush(cycan_boot_t *b)
     return ok;
 }
 
-static bool check_header(cycan_boot_t *b)
+/* Size of the file the header describes: header + payload [+ signature]. */
+static bool header_fits(const cycan_cyfw_header_t *h, uint32_t size)
 {
-    cycan_cyfw_header_t h;
-    return cycan_cyfw_check_header(b->header, b->cfg.model, b->cfg.hw_rev, &h) == CYCAN_CYFW_OK &&
-           h.payload_size == b->size - CYCAN_CYFW_HEADER_SIZE;
+    uint32_t sig = (h->flags & CYCAN_CYFW_FLAG_SIGNED) != 0u ? CYCAN_CYFW_SIGNATURE_SIZE : 0u;
+    return size >= CYCAN_CYFW_HEADER_SIZE + sig && h->payload_size == size - CYCAN_CYFW_HEADER_SIZE - sig;
 }
 
 static bool flash_crc(const cycan_boot_t *b, uint32_t from, uint32_t to, uint32_t *crc)
@@ -140,6 +149,12 @@ static void on_begin(cycan_boot_t *b, const uint8_t *d, uint8_t len)
 {
     cycan_fw_begin_t m;
     if (!cycan_dec_fw_begin(d, len, &m)) return;
+    if (b->state == CYCAN_BOOT_DONE) {
+        ack(b, CYCAN_FWST_BUSY); /* verified image about to start (PROTOCOL 9) */
+        return;
+    }
+    /* A REBOOT answered just before must not start an image this transfer may replace. */
+    b->start_pending = false;
     b->next_offset = 0;
     if (m.size < CYCAN_CYFW_HEADER_SIZE || m.size > b->hal->image_capacity || m.size > 0xFFFFFFul + 1u) {
         abort_update(b, CYCAN_FWST_BAD_IMAGE);
@@ -149,11 +164,22 @@ static void on_begin(cycan_boot_t *b, const uint8_t *d, uint8_t len)
     b->crc_expected = m.crc32;
     b->crc_file = 0;
     b->crc_payload = 0;
-    b->since_ack = 0;
     b->bad_count = 0;
-    b->header_ok = false;
-    b->wbuf_base = 0;
     b->wbuf_len = 0;
+    /* Nothing is erased until the header has arrived and proved the image is for us. */
+    b->state = CYCAN_BOOT_HEADER;
+    ack(b, CYCAN_FWST_OK);
+}
+
+static void on_header_complete(cycan_boot_t *b)
+{
+    cycan_cyfw_header_t h;
+    if (cycan_cyfw_check_header(b->header, b->cfg.model, b->cfg.hw_rev, &h) != CYCAN_CYFW_OK || !header_fits(&h, b->size)) {
+        abort_update(b, CYCAN_FWST_BAD_IMAGE); /* the installed application stays untouched */
+        return;
+    }
+    b->payload_size = h.payload_size;
+    b->payload_crc = h.payload_crc32;
     b->state = CYCAN_BOOT_ERASE;
     ack(b, CYCAN_FWST_BUSY);
 }
@@ -161,13 +187,19 @@ static void on_begin(cycan_boot_t *b, const uint8_t *d, uint8_t len)
 static void on_data(cycan_boot_t *b, const uint8_t *d, uint8_t len)
 {
     cycan_fw_data_t m;
-    uint32_t n, i;
-    if (!cycan_dec_fw_data(d, len, &m)) return;
-    if (b->state == CYCAN_BOOT_ERASE) {
+    uint32_t n, i, plimit;
+    /* PROTOCOL 9: payload + 3 is a whole frame; padding is never data. */
+    if (len < 4u || cycan_fd_len_to_dlc(len) < 0 || !cycan_dec_fw_data(d, len, &m)) return;
+    switch (b->state) {
+    case CYCAN_BOOT_DONE:
         ack(b, CYCAN_FWST_BUSY);
         return;
-    }
-    if (b->state != CYCAN_BOOT_RECEIVE) {
+    case CYCAN_BOOT_ERASE:
+        return; /* the OK after the erase tells the host where to resume */
+    case CYCAN_BOOT_HEADER:
+    case CYCAN_BOOT_RECEIVE:
+        break;
+    default:
         ack(b, CYCAN_FWST_WRONG_STATE);
         return;
     }
@@ -179,13 +211,24 @@ static void on_data(cycan_boot_t *b, const uint8_t *d, uint8_t len)
         return;
     }
     b->bad_count = 0;
-    /* Bytes past `size` are padding (short final chunk, FD length rounding). */
+    /* Bytes past `size` are padding of a short final chunk. */
     n = b->size - b->next_offset;
     if (n > m.len) n = m.len;
+    if (b->state == CYCAN_BOOT_HEADER) {
+        /* Header bytes only: whatever follows in this frame is sent again after the erase. */
+        if (n > CYCAN_CYFW_HEADER_SIZE - b->next_offset) n = CYCAN_CYFW_HEADER_SIZE - b->next_offset;
+        memcpy(b->header + b->next_offset, m.bytes, n);
+        b->crc_file = cycan_crc32_update(b->crc_file, m.bytes, n);
+        b->next_offset += n;
+        if (b->next_offset == CYCAN_CYFW_HEADER_SIZE) {
+            on_header_complete(b);
+            return;
+        }
+        if (++b->since_ack >= window(b)) ack(b, CYCAN_FWST_OK);
+        return;
+    }
     if (n == 0u) return;
     for (i = 0; i < n; i++) {
-        uint32_t off = b->next_offset + i;
-        if (off < CYCAN_CYFW_HEADER_SIZE) b->header[off] = m.bytes[i];
         b->wbuf[b->wbuf_len++] = m.bytes[i];
         if (b->wbuf_len == CYCAN_BOOT_WRITE_CHUNK && !wbuf_flush(b)) {
             abort_update(b, CYCAN_FWST_FLASH_ERROR);
@@ -193,34 +236,44 @@ static void on_data(cycan_boot_t *b, const uint8_t *d, uint8_t len)
         }
     }
     b->crc_file = cycan_crc32_update(b->crc_file, m.bytes, n);
-    if (b->next_offset + n > CYCAN_CYFW_HEADER_SIZE) {
-        uint32_t skip = b->next_offset < CYCAN_CYFW_HEADER_SIZE ? CYCAN_CYFW_HEADER_SIZE - b->next_offset : 0u;
-        b->crc_payload = cycan_crc32_update(b->crc_payload, m.bytes + skip, n - skip);
+    plimit = CYCAN_CYFW_HEADER_SIZE + b->payload_size; /* a signature after the payload is not in its CRC */
+    if (b->next_offset < plimit) {
+        uint32_t k = plimit - b->next_offset < n ? plimit - b->next_offset : n;
+        b->crc_payload = cycan_crc32_update(b->crc_payload, m.bytes, k);
     }
     b->next_offset += n;
-    if (!b->header_ok && b->next_offset >= CYCAN_CYFW_HEADER_SIZE) {
-        if (!check_header(b)) {
-            abort_update(b, CYCAN_FWST_BAD_IMAGE);
-            return;
-        }
-        b->header_ok = true;
-    }
     if (++b->since_ack >= window(b)) ack(b, CYCAN_FWST_OK);
+}
+
+static void run_erase(cycan_boot_t *b)
+{
+    /* PROTOCOL 9: from here on there is no valid image, so the heartbeat reports 0.0.0. */
+    b->image_ok = false;
+    memset(b->app_fw, 0, sizeof b->app_fw);
+    if (!b->hal->flash_erase(b->hal->ctx, b->size) ||
+        !b->hal->flash_write(b->hal->ctx, 0, b->header, CYCAN_CYFW_HEADER_SIZE)) {
+        abort_update(b, CYCAN_FWST_FLASH_ERROR);
+        return;
+    }
+    b->wbuf_base = CYCAN_CYFW_HEADER_SIZE;
+    b->wbuf_len = 0;
+    b->state = CYCAN_BOOT_RECEIVE;
+    ack(b, CYCAN_FWST_OK); /* next_offset = 64 */
 }
 
 static void on_end(cycan_boot_t *b)
 {
     uint32_t crc;
     cycan_cyfw_header_t h;
-    if (b->state == CYCAN_BOOT_DONE) {
-        ack(b, CYCAN_FWST_OK); /* repeated END after a lost ACK */
+    if (b->state == CYCAN_BOOT_DONE || b->state == CYCAN_BOOT_ERASE) {
+        ack(b, CYCAN_FWST_BUSY);
         return;
     }
-    if (b->state != CYCAN_BOOT_RECEIVE) {
-        ack(b, b->state == CYCAN_BOOT_ERASE ? CYCAN_FWST_BUSY : CYCAN_FWST_WRONG_STATE);
+    if (b->state != CYCAN_BOOT_RECEIVE && b->state != CYCAN_BOOT_HEADER) {
+        ack(b, CYCAN_FWST_WRONG_STATE);
         return;
     }
-    if (b->next_offset != b->size) {
+    if (b->state != CYCAN_BOOT_RECEIVE || b->next_offset != b->size) {
         ack(b, CYCAN_FWST_BAD_OFFSET);
         return;
     }
@@ -232,8 +285,7 @@ static void on_end(cycan_boot_t *b)
         abort_update(b, CYCAN_FWST_BAD_CRC);
         return;
     }
-    (void)cycan_cyfw_check_header(b->header, b->cfg.model, b->cfg.hw_rev, &h);
-    if (b->crc_payload != h.payload_crc32) {
+    if (b->crc_payload != b->payload_crc) {
         abort_update(b, CYCAN_FWST_BAD_IMAGE);
         return;
     }
@@ -241,9 +293,11 @@ static void on_end(cycan_boot_t *b)
         abort_update(b, CYCAN_FWST_FLASH_ERROR);
         return;
     }
+    (void)cycan_cyfw_check_header(b->header, b->cfg.model, b->cfg.hw_rev, &h);
     b->app_fw[0] = h.fw_major;
     b->app_fw[1] = h.fw_minor;
     b->app_fw[2] = h.fw_patch;
+    b->image_ok = true;
     b->state = CYCAN_BOOT_DONE;
     b->start_pending = true;
     b->start_at = b->now + CYCAN_BOOT_START_DELAY_US;
@@ -284,10 +338,13 @@ static void on_sys(cycan_boot_t *b, uint8_t index, const uint8_t *d, uint8_t len
         if (!cycan_dec_assign_id(d, len, &m) || m.uid48 != b->uid.uid48 || m.new_num < CYCAN_NUM_MIN ||
             m.new_num > CYCAN_NUM_UNASSIGNED)
             return;
-        b->cfg.num = m.new_num;
+        b->num = m.new_num;
         b->enum_pending = false;
         send_enum_rsp(b, true);
-        if (m.persist && b->hal->identity_save != NULL) (void)b->hal->identity_save(b->hal->ctx, m.new_num);
+        if (m.persist && b->hal->storage_read != NULL) {
+            cycan_store_io_t io = store_io(b);
+            (void)cycan_store_set_num(&io, b->cfg.model, m.new_num);
+        }
         b->hb_next = b->now;
         break;
     }
@@ -307,14 +364,14 @@ static void on_sys(cycan_boot_t *b, uint8_t index, const uint8_t *d, uint8_t len
             i.proto_minor = CYCAN_PROTO_MINOR;
             i.catalog_rev = b->cfg.catalog_rev;
             i.bootloader_ver = b->cfg.bootloader_ver;
-            cycan_enc_info_device(&f, b->cfg.devtype, b->cfg.num, &i);
+            cycan_enc_info_device(&f, b->cfg.devtype, b->num, &i);
         } else if (m.page == CYCAN_INFO_UID_LO || m.page == CYCAN_INFO_UID_HI) {
             cycan_info_rsp_t r;
             memset(&r, 0, sizeof r);
             r.page = m.page;
             if (m.page == CYCAN_INFO_UID_LO) memcpy(r.bytes, b->uid96, 7);
             else memcpy(r.bytes, b->uid96 + 7, 5);
-            cycan_enc_info_rsp(&f, b->cfg.devtype, b->cfg.num, &r);
+            cycan_enc_info_rsp(&f, b->cfg.devtype, b->num, &r);
         } else {
             return;
         }
@@ -334,7 +391,7 @@ static void on_sys(cycan_boot_t *b, uint8_t index, const uint8_t *d, uint8_t len
             b->start_pending = true;
             b->start_at = b->now + CYCAN_BOOT_START_DELAY_US;
         }
-        cycan_enc_command_rsp(&f, b->cfg.devtype, b->cfg.num, &r);
+        cycan_enc_command_rsp(&f, b->cfg.devtype, b->num, &r);
         send(b, &f);
         break;
     }
@@ -343,19 +400,35 @@ static void on_sys(cycan_boot_t *b, uint8_t index, const uint8_t *d, uint8_t len
     }
 }
 
+/* PROTOCOL 9.0: the only frame that matters during the recovery window. */
+static bool is_recovery(const cycan_frame_t *f)
+{
+    cycan_command_t m;
+    return CYCAN_ID_CLASS(f->id) == CYCAN_CLS_SYS_REQ && CYCAN_ID_INDEX(f->id) == CYCAN_SYS_COMMAND &&
+           CYCAN_ID_DEVTYPE(f->id) == CYCAN_DEVTYPE_BROADCAST && CYCAN_ID_NUM(f->id) == CYCAN_NUM_BROADCAST &&
+           cycan_dec_command(f->data, f->len, &m) && m.cmd == CYCAN_CMD_ENTER_BOOTLOADER && m.arg == CYCAN_BOOT_RECOVERY_ARG;
+}
+
 static void handle(cycan_boot_t *b, const cycan_frame_t *f)
 {
     uint8_t index = CYCAN_ID_INDEX(f->id);
-    if (!cycan_accepts(f->id, b->cfg.devtype, b->cfg.num)) return;
+    if (!cycan_accepts(f->id, b->cfg.devtype, b->num)) return;
+    if (b->state == CYCAN_BOOT_WINDOW) {
+        if (is_recovery(f)) {
+            b->state = CYCAN_BOOT_IDLE;
+            b->hb_next = b->now;
+        }
+        return;
+    }
     switch (CYCAN_ID_CLASS(f->id)) {
     case CYCAN_CLS_SYS_REQ:
         on_sys(b, index, f->data, f->len);
         break;
     case CYCAN_CLS_FW_REQ:
-        /* FW frames must be addressed to this board: a bus-wide broadcast would reflash
-         * every board in its bootloader at once. NUM 63 is allowed so an unassigned board
-         * can still be recovered by its address (devtype, 63). */
-        if (CYCAN_ID_NUM(f->id) != b->cfg.num) return;
+        /* FW frames must be addressed to this board's assigned number: a broadcast would
+         * reflash every board in its bootloader at once, and an unassigned board answers
+         * only discovery (PROTOCOL 3.4); assign it a number first. */
+        if (!assigned(b) || CYCAN_ID_NUM(f->id) != b->num) return;
         if (index == CYCAN_FW_BEGIN) on_begin(b, f->data, f->len);
         else if (index == CYCAN_FW_DATA) on_data(b, f->data, f->len);
         else if (index == CYCAN_FW_END) on_end(b);
@@ -375,15 +448,28 @@ void cycan_boot_init(cycan_boot_t *b, const cycan_boot_cfg_t *cfg, const cycan_b
     b->cfg = *cfg;
     b->hal = hal;
     b->now = now_us;
+    b->num = CYCAN_NUM_UNASSIGNED;
+    b->data_bitrate = cfg->data_bitrate_default <= CYCAN_DATA_BITRATE_MAX ? cfg->data_bitrate_default : CYCAN_DATA_BITRATE_CLASSIC;
     if (hal->uid96 != NULL) hal->uid96(hal->ctx, b->uid96);
     cycan_uid_derive(b->uid96, &b->uid);
+    if (hal->storage_read != NULL) {
+        cycan_store_io_t io = store_io(b);
+        cycan_store_info_t info;
+        if (cycan_store_scan(&io, cfg->model, &info)) b->num = info.num;
+        b->data_bitrate = cycan_store_data_bitrate(&io, cfg->model, b->data_bitrate);
+    }
+    if (hal->can_config != NULL) hal->can_config(hal->ctx, b->data_bitrate);
     b->hb_next = now_us + MS(b->uid.uid16 % (CYCAN_HEARTBEAT_PHASE_MAX_MS + 1u));
-    /* Report the installed application's version, if its header is intact. */
-    if (hal->flash_read(hal->ctx, 0, hdr, sizeof hdr) &&
+    b->image_ok = cycan_boot_image_valid(b);
+    if (b->image_ok && hal->flash_read(hal->ctx, 0, hdr, sizeof hdr) &&
         cycan_cyfw_check_header(hdr, cfg->model, cfg->hw_rev, &h) == CYCAN_CYFW_OK) {
         b->app_fw[0] = h.fw_major;
         b->app_fw[1] = h.fw_minor;
         b->app_fw[2] = h.fw_patch;
+    }
+    if (b->image_ok && !cfg->stay) {
+        b->state = CYCAN_BOOT_WINDOW;
+        b->window_end = now_us + MS(CYCAN_RECOVERY_WINDOW_MS);
     }
 }
 
@@ -391,7 +477,7 @@ bool cycan_boot_on_frame(cycan_boot_t *b, uint32_t id, const uint8_t *data, uint
 {
     uint8_t head = b->rx_head, next = (uint8_t)((head + 1u) & RX_MASK);
     cycan_frame_t *e;
-    if (!cycan_accepts(id, b->cfg.devtype, b->cfg.num)) return false;
+    if (!cycan_accepts(id, b->cfg.devtype, b->num)) return false;
     if (next == b->rx_tail) {
         b->rx_overruns++;
         return false;
@@ -416,16 +502,14 @@ void cycan_boot_poll(cycan_boot_t *b, uint32_t now_us)
         /* Released only after handling: DATA is processed in place (no 64-byte copy). */
         b->rx_tail = (uint8_t)((b->rx_tail + 1u) & RX_MASK);
     }
-    if (b->state == CYCAN_BOOT_ERASE) {
-        /* PROTOCOL 9: once erased there is no valid image, so the heartbeat reports 0.0.0. */
-        memset(b->app_fw, 0, sizeof b->app_fw);
-        if (b->hal->flash_erase(b->hal->ctx, b->size)) {
-            b->state = CYCAN_BOOT_RECEIVE;
-            ack(b, CYCAN_FWST_OK);
-        } else {
-            abort_update(b, CYCAN_FWST_FLASH_ERROR);
+    if (b->state == CYCAN_BOOT_WINDOW) {
+        if (due(b->now, b->window_end)) {
+            b->state = CYCAN_BOOT_IDLE;
+            b->hal->start_app(b->hal->ctx);
         }
+        return;
     }
+    if (b->state == CYCAN_BOOT_ERASE) run_erase(b);
     if (b->enum_pending && due(b->now, b->enum_due)) send_enum_rsp(b, false);
     if (assigned(b) && due(b->now, b->hb_next)) {
         send_heartbeat(b);
@@ -443,11 +527,24 @@ void cycan_boot_poll(cycan_boot_t *b, uint32_t now_us)
     }
     if (b->start_pending && due(b->now, b->start_at)) {
         b->start_pending = false;
-        b->hal->start_app(b->hal->ctx);
+        /* Only a just-verified image, or an untouched valid one (REBOOT): never an image a
+         * transfer has started to replace. */
+        if (b->state == CYCAN_BOOT_DONE || (b->state == CYCAN_BOOT_IDLE && cycan_boot_image_valid(b)))
+            b->hal->start_app(b->hal->ctx);
     }
 }
 
 cycan_boot_state_t cycan_boot_state(const cycan_boot_t *b)
 {
     return b->state;
+}
+
+uint8_t cycan_boot_num(const cycan_boot_t *b)
+{
+    return b->num;
+}
+
+uint8_t cycan_boot_data_bitrate(const cycan_boot_t *b)
+{
+    return b->data_bitrate;
 }

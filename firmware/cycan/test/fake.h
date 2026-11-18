@@ -14,10 +14,17 @@ typedef struct {
     int nsent;
     int send_fail;      /* number of next can_send calls that fail */
     uint8_t uid96[12];
-    uint8_t region[2][FAKE_REGION_SIZE];
+    uint8_t region[2][FAKE_REGION_SIZE]; /* storage slots A and B */
     int erases, writes;
-    int nsent_at_write[2]; /* frames already sent when the region was last written */
-    uint8_t saved_num;     /* bootloader identity_save */
+    int nsent_at_store; /* frames already sent when storage was last written */
+    /* Power-cut injection: < 0 off; otherwise the number of bytes that may still be
+     * programmed. An erase with 0 left is torn (half the slot erased); the write that runs
+     * out programs only the bytes left. Afterwards every storage call fails (dead). */
+    long cut_budget;
+    bool dead;
+    long programmed; /* bytes programmed since fake_init / last reset of this counter */
+    int can_configs;
+    uint8_t can_bitrate;
     int reboots, bootloaders, app_starts;
     int led_calls;
     bool led;

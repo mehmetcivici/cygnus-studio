@@ -12,17 +12,13 @@
 
 #define RX_MASK ((uint8_t)(CYCAN_RX_QUEUE_LEN - 1u))
 #define MS(x) ((uint32_t)((uint32_t)(x) * 1000u))
+#define BIT(b) ((uint16_t)(1u << (b)))
 
 typedef char cycan_rxq_is_power_of_2[(CYCAN_RX_QUEUE_LEN & (CYCAN_RX_QUEUE_LEN - 1u)) == 0u ? 1 : -1];
+typedef char cycan_rxq_fits_u8[CYCAN_RX_QUEUE_LEN <= 128u ? 1 : -1];
+typedef char cycan_txq_fits_u8[CYCAN_TX_QUEUE_LEN >= 1u && CYCAN_TX_QUEUE_LEN <= 255u ? 1 : -1];
 
-/* Parameter blob: 32-byte header, 8-byte records, 8-byte trailer (CRC32, ~CRC32). */
-#define BLOB_MAGIC "CYP1"
-#define BLOB_HEADER 32u
-#define BLOB_RECORD 8u
-#define BLOB_TRAILER 8u
-#define BLOB_CHUNK 64u
-#define BLOB_MAX_RECORDS 1024u
-
+/* Wrap-safe "t has come": valid while now and t are less than 2^31 us apart. */
 static bool due(uint32_t now, uint32_t t)
 {
     return (int32_t)(now - t) >= 0;
@@ -42,11 +38,32 @@ static uint32_t rnd(cycan_node_t *n)
     return (uint32_t)n->uid.uid48 ^ (n->now * 2654435761ul);
 }
 
+/* Every event that forces the board neutral also disarms CTRL: driving resumes only after a
+ * fresh neutral command (PROTOCOL 7, neutral-first rule). */
 static void neutral(cycan_node_t *n, cycan_neutral_reason_t why)
 {
-    n->ctrl_armed = false;
+    n->ctrl_armed = 0;
+    n->ctrl_watch = false;
     n->enabled = false;
-    if (n->app->neutral != NULL) n->app->neutral(n, why);
+    if (n->in_neutral || n->app->neutral == NULL) return;
+    n->in_neutral = true; /* neutral() may raise a fault, which would land here again */
+    n->app->neutral(n, why);
+    n->in_neutral = false;
+}
+
+static cycan_store_io_t store_io(const cycan_node_t *n)
+{
+    cycan_store_io_t io;
+    io.ctx = n->hal->ctx;
+    io.read = n->hal->storage_read;
+    io.erase = n->hal->storage_erase;
+    io.write = n->hal->storage_write;
+    return io;
+}
+
+static bool has_storage(const cycan_hal_t *h)
+{
+    return h->storage_read != NULL && h->storage_erase != NULL && h->storage_write != NULL;
 }
 
 /* ---- Transmit -------------------------------------------------------------------- */
@@ -130,6 +147,21 @@ static bool in_range(cycan_node_t *n, const cycan_param_t *p, cycan_pval_t v)
     return n == NULL || n->app->param_validate == NULL || n->app->param_validate(n, p, v);
 }
 
+/* CRC of what SAVE_PARAMS would store (name + values); UNSAVED compares it with the copy
+ * that is in the store (PROTOCOL 5: "changes not yet saved", not "SET was called"). */
+static void touch(cycan_node_t *n)
+{
+    uint8_t b[6];
+    uint16_t i;
+    uint32_t crc = cycan_crc32((const uint8_t *)n->name, CYCAN_NAME_BYTES);
+    for (i = 0; i < n->app->param_count; i++) {
+        cycan_wr_u16(b, n->app->params[i].pid);
+        cycan_wr_u32(b + 2, pval_load(&n->app->params[i]).u32);
+        crc = cycan_crc32_update(crc, b, sizeof b);
+    }
+    n->ram_crc = crc;
+}
+
 /* Library side effects of a changed common parameter. */
 static void param_changed(cycan_node_t *n, const cycan_param_t *p)
 {
@@ -149,7 +181,7 @@ static uint8_t param_write(cycan_node_t *n, uint16_t pid, uint8_t ptype, cycan_p
     if (!in_range(n, p, v)) return CYCAN_PST_OUT_OF_RANGE;
     if (pval_load(p).u32 != v.u32) {
         pval_store(p, v);
-        n->unsaved = true;
+        touch(n);
         param_changed(n, p);
     }
     return CYCAN_PST_OK;
@@ -174,129 +206,82 @@ static uint32_t param_u32(const cycan_node_t *n, int16_t idx, uint32_t fallback)
 
 /* ---- Persistence ----------------------------------------------------------------- */
 
-uint32_t cycan_params_blob_size(const cycan_app_t *app)
+uint32_t cycan_store_slot_size(const cycan_app_t *app)
 {
-    return BLOB_HEADER + BLOB_RECORD * (uint32_t)app->param_count + BLOB_TRAILER;
+    return CYCAN_STORE_SLOT_SIZE(app->param_count);
 }
 
-void cycan_identity_encode(uint8_t out[CYCAN_IDENTITY_SIZE], uint8_t num)
+static cycan_init_result_t store_scan(const cycan_node_t *n, cycan_store_info_t *info)
 {
-    out[0] = 'C';
-    out[1] = 'I';
-    out[2] = num;
-    out[3] = (uint8_t)~num;
-    out[4] = out[5] = out[6] = out[7] = 0;
+    cycan_store_io_t io = store_io(n);
+    if (!has_storage(n->hal)) {
+        memset(info, 0, sizeof *info);
+        info->slot = -1;
+        info->num = CYCAN_NUM_UNASSIGNED;
+        return CYCAN_INIT_STORAGE_BLANK;
+    }
+    if (cycan_store_scan(&io, n->app->model, info)) return CYCAN_INIT_OK;
+    return cycan_store_corrupt(info) ? CYCAN_INIT_STORAGE_CORRUPT : CYCAN_INIT_STORAGE_BLANK;
 }
 
-uint8_t cycan_identity_decode(const uint8_t in[CYCAN_IDENTITY_SIZE])
+/* Defaults first, then the stored records: records the table no longer has, or whose type or
+ * range no longer fits it, keep their default, so a firmware update never loads an invalid
+ * value. Read-only values describe the hardware and always come from the table. The copy's
+ * CRC was checked by the scan, so a torn write is never half applied. */
+static void apply_store(cycan_node_t *n, const cycan_store_info_t *info)
 {
-    if (in[0] != 'C' || in[1] != 'I' || (uint8_t)(in[2] ^ in[3]) != 0xFFu) return CYCAN_NUM_UNASSIGNED;
-    if (in[2] < CYCAN_NUM_MIN || in[2] > CYCAN_NUM_UNASSIGNED) return CYCAN_NUM_UNASSIGNED;
-    return in[2];
+    cycan_store_io_t io = store_io(n);
+    uint8_t rec[CYCAN_STORE_RECORD];
+    uint16_t i;
+    for (i = 0; i < n->app->param_count; i++) pval_store(&n->app->params[i], n->app->params[i].def);
+    memset(n->name, 0, sizeof n->name);
+    if (info->slot < 0) return;
+    memcpy(n->name, info->name, CYCAN_NAME_BYTES);
+    for (i = 0; i < info->count; i++) {
+        const cycan_param_t *p;
+        cycan_pval_t v;
+        if (!cycan_store_record(&io, info, i, rec)) break;
+        p = find_param(n->app, cycan_rd_u16(rec), NULL);
+        v.u32 = cycan_rd_u32(rec + 4);
+        if (p == NULL || p->ptype != rec[2] || (p->flags & CYCAN_PF_READ_ONLY) != 0u || !in_range(n, p, v)) continue;
+        pval_store(p, v);
+    }
 }
 
-static bool has_storage(const cycan_hal_t *h)
+static bool ram_rec(void *src, uint16_t i, uint8_t rec[8])
 {
-    return h->storage_read != NULL && h->storage_erase != NULL && h->storage_write != NULL;
-}
-
-static bool identity_save(cycan_node_t *n)
-{
-    uint8_t rec[CYCAN_IDENTITY_SIZE];
-    if (!has_storage(n->hal)) return false;
-    cycan_identity_encode(rec, n->num);
-    return n->hal->storage_erase(n->hal->ctx, CYCAN_REGION_IDENTITY) &&
-           n->hal->storage_write(n->hal->ctx, CYCAN_REGION_IDENTITY, 0, rec, sizeof rec);
+    const cycan_node_t *n = (const cycan_node_t *)src;
+    const cycan_param_t *p = &n->app->params[i];
+    cycan_wr_u16(rec, p->pid);
+    rec[2] = p->ptype;
+    rec[3] = 0;
+    cycan_wr_u32(rec + 4, pval_load(p).u32);
+    return true;
 }
 
 bool cycan_save(cycan_node_t *n)
 {
-    const cycan_hal_t *h = n->hal;
-    uint8_t buf[BLOB_CHUNK];
-    uint32_t off = 0, crc;
-    uint16_t i;
-    uint8_t fill = 0;
-    if (!has_storage(h)) return false;
-    if (!h->storage_erase(h->ctx, CYCAN_REGION_PARAMS)) return false;
-
-    memset(buf, 0, BLOB_HEADER);
-    memcpy(buf, BLOB_MAGIC, 4);
-    buf[4] = n->app->model;
-    buf[5] = 1; /* layout version */
-    cycan_wr_u16(buf + 6, n->app->param_count);
-    memcpy(buf + 8, n->name, CYCAN_NAME_BYTES);
-    crc = cycan_crc32(buf, BLOB_HEADER);
-    if (!h->storage_write(h->ctx, CYCAN_REGION_PARAMS, off, buf, BLOB_HEADER)) return false;
-    off += BLOB_HEADER;
-
-    for (i = 0; i < n->app->param_count; i++) {
-        const cycan_param_t *p = &n->app->params[i];
-        uint8_t *r = buf + fill;
-        cycan_wr_u16(r, p->pid);
-        r[2] = p->ptype;
-        r[3] = 0;
-        cycan_wr_u32(r + 4, pval_load(p).u32);
-        fill = (uint8_t)(fill + BLOB_RECORD);
-        if (fill == BLOB_CHUNK || i + 1u == n->app->param_count) {
-            crc = cycan_crc32_update(crc, buf, fill);
-            if (!h->storage_write(h->ctx, CYCAN_REGION_PARAMS, off, buf, fill)) return false;
-            off += fill;
-            fill = 0;
-        }
-    }
-    cycan_wr_u32(buf, crc);
-    cycan_wr_u32(buf + 4, ~crc);
-    if (!h->storage_write(h->ctx, CYCAN_REGION_PARAMS, off, buf, BLOB_TRAILER)) return false;
-
-    n->unsaved = false;
-    n->fault_warn = (uint16_t)(n->fault_warn & ~(1u << CYCAN_FAULT_PARAM_CRC));
+    cycan_store_io_t io = store_io(n);
+    cycan_store_info_t cur;
+    if (!has_storage(n->hal) || n->enabled) return false;
+    (void)cycan_store_scan(&io, n->app->model, &cur);
+    /* The stored NUM, not the RAM one: a non-persistent ASSIGN_ID stays non-persistent. */
+    if (!cycan_store_write(&io, &cur, n->app->model, n->stored_num, n->name, n->app->param_count, ram_rec, n)) return false;
+    n->saved_crc = n->ram_crc;
+    cycan_fault_clear(n, CYCAN_FAULT_PARAM_CRC, CYCAN_FAULT_ACTIVE);
     return true;
 }
 
-/* Two passes: verify the CRC over the whole blob first, then apply records, so a torn
- * write never leaves a half-loaded parameter set. */
-static cycan_init_result_t params_load(cycan_node_t *n)
+static uint8_t load_saved(cycan_node_t *n)
 {
-    const cycan_hal_t *h = n->hal;
-    uint8_t hdr[BLOB_HEADER], buf[BLOB_CHUNK];
-    uint32_t crc, total, off;
-    uint16_t count, i;
-    if (!has_storage(h)) return CYCAN_INIT_STORAGE_BLANK;
-    if (!h->storage_read(h->ctx, CYCAN_REGION_PARAMS, 0, hdr, BLOB_HEADER)) return CYCAN_INIT_STORAGE_CORRUPT;
-    for (i = 0; i < 4u && hdr[i] == 0xFFu; i++) {
-    }
-    if (i == 4u) return CYCAN_INIT_STORAGE_BLANK;
-    if (memcmp(hdr, BLOB_MAGIC, 4) != 0 || hdr[5] != 1u) return CYCAN_INIT_STORAGE_CORRUPT;
-    /* Another product's settings (board reflashed with a different model): start fresh. */
-    if (hdr[4] != n->app->model) return CYCAN_INIT_STORAGE_BLANK;
-    count = cycan_rd_u16(hdr + 6);
-    if (count > BLOB_MAX_RECORDS) return CYCAN_INIT_STORAGE_CORRUPT;
-
-    crc = cycan_crc32(hdr, BLOB_HEADER);
-    total = (uint32_t)count * BLOB_RECORD;
-    for (off = 0; off < total; off += BLOB_CHUNK) {
-        uint32_t len = total - off < BLOB_CHUNK ? total - off : BLOB_CHUNK;
-        if (!h->storage_read(h->ctx, CYCAN_REGION_PARAMS, BLOB_HEADER + off, buf, len)) return CYCAN_INIT_STORAGE_CORRUPT;
-        crc = cycan_crc32_update(crc, buf, len);
-    }
-    if (!h->storage_read(h->ctx, CYCAN_REGION_PARAMS, BLOB_HEADER + total, buf, BLOB_TRAILER))
-        return CYCAN_INIT_STORAGE_CORRUPT;
-    if (cycan_rd_u32(buf) != crc || cycan_rd_u32(buf + 4) != ~crc) return CYCAN_INIT_STORAGE_CORRUPT;
-
-    memcpy(n->name, hdr + 8, CYCAN_NAME_BYTES);
-    for (off = 0; off < total; off += BLOB_RECORD) {
-        const cycan_param_t *p;
-        cycan_pval_t v;
-        if (!h->storage_read(h->ctx, CYCAN_REGION_PARAMS, BLOB_HEADER + off, buf, BLOB_RECORD)) break;
-        p = find_param(n->app, cycan_rd_u16(buf), NULL);
-        v.u32 = cycan_rd_u32(buf + 4);
-        /* Read-only values describe the hardware and always come from the table. Records
-         * that no longer fit the current table (pid gone, type or range changed) keep the
-         * default, so a firmware update never loads an invalid value. */
-        if (p == NULL || p->ptype != buf[2] || (p->flags & CYCAN_PF_READ_ONLY) != 0u || !in_range(n, p, v)) continue;
-        pval_store(p, v);
-    }
-    return CYCAN_INIT_OK;
+    cycan_store_info_t info;
+    uint16_t i;
+    if (store_scan(n, &info) == CYCAN_INIT_STORAGE_CORRUPT) return CYCAN_CMDST_FAILED;
+    apply_store(n, &info);
+    for (i = 0; i < n->app->param_count; i++) param_changed(n, &n->app->params[i]);
+    touch(n);
+    n->saved_crc = n->ram_crc;
+    return CYCAN_CMDST_OK;
 }
 
 /* ---- Outgoing messages ----------------------------------------------------------- */
@@ -328,6 +313,7 @@ static void send_enum_rsp(cycan_node_t *n, bool ack)
 
 static uint8_t state_of(const cycan_node_t *n)
 {
+    if (n->boot_heartbeat) return CYCAN_STATE_BOOT;
     if (n->estop) return CYCAN_STATE_ESTOP;
     if (n->fault_active != 0u) return CYCAN_STATE_FAULT;
     return n->enabled ? CYCAN_STATE_ACTIVE : CYCAN_STATE_IDLE;
@@ -338,7 +324,7 @@ static void send_heartbeat(cycan_node_t *n)
     cycan_frame_t f;
     cycan_heartbeat_t m;
     m.state = state_of(n);
-    m.unsaved = n->unsaved;
+    m.unsaved = cycan_unsaved(n);
     m.enabled = n->enabled;
     m.warning = n->fault_warn != 0u;
     m.identify = n->identify_on;
@@ -349,6 +335,7 @@ static void send_heartbeat(cycan_node_t *n)
     m.fw_patch = n->app->fw_patch;
     cycan_enc_heartbeat(&f, n->app->devtype, n->num, &m);
     send(n, &f);
+    n->boot_heartbeat = false;
 }
 
 static void send_command_rsp(cycan_node_t *n, uint8_t cmd, uint8_t status, uint32_t result)
@@ -434,10 +421,26 @@ static void identify(cycan_node_t *n, uint8_t seconds)
 
 static void latch_estop(cycan_node_t *n)
 {
+    /* PROTOCOL 4.5: a long command running when ESTOP arrives ends with FAILED. The
+     * application aborts it in neutral(ESTOP); a later cycan_command_finish() is ignored. */
+    if (n->cmd_pending) {
+        n->cmd_pending = false;
+        if (!silent(n)) send_command_rsp(n, n->cmd_code, CYCAN_CMDST_FAILED, 0);
+    }
     if (n->estop) return;
     n->estop = true;
     cycan_fault_set(n, CYCAN_FAULT_ESTOP, CYCAN_FAULT_ACTIVE);
     neutral(n, CYCAN_NEUTRAL_ESTOP);
+}
+
+/* ESTOPs counted by the RX interrupt but not latched yet. */
+static void check_estop(cycan_node_t *n)
+{
+    uint8_t seq = n->estop_seq;
+    if (seq == n->estop_seen) return;
+    n->estop_seen = seq;
+    n->estop_this_turn = true;
+    latch_estop(n);
 }
 
 /* PROTOCOL 3.4: announce the conflict with a CONFLICT-flagged ENUM_RSP after 0..20 ms so the
@@ -458,6 +461,10 @@ static void on_assign(cycan_node_t *n, const cycan_assign_id_t *m)
     uint8_t old = n->num;
     bool was_silent = silent(n);
     if (m->uid48 != n->uid.uid48 || m->new_num < CYCAN_NUM_MIN || m->new_num > CYCAN_NUM_UNASSIGNED) return;
+    /* A persistent assignment erases flash, which stalls the CPU (and a motor's commutation)
+     * on single-bank parts: refused while driving, without confirmation, so the host's
+     * retries run out and it reports the failure. */
+    if (m->persist && n->enabled) return;
     n->num = m->new_num;
     /* A silent board is already neutral (CONFLICT did that); an active one changing its
      * address loses its controller, so it stops driving and streaming. */
@@ -467,46 +474,75 @@ static void on_assign(cycan_node_t *n, const cycan_assign_id_t *m)
     }
     n->conflict = false;
     n->enum_pending = false;
+    n->boot_heartbeat = false;
     send_enum_rsp(n, true);
     /* Persist after the confirmation is on its way: the flash erase may block for tens of ms. */
-    if (m->persist) (void)identity_save(n);
+    if (m->persist && has_storage(n->hal)) {
+        cycan_store_io_t io = store_io(n);
+        if (cycan_store_set_num(&io, n->app->model, n->num)) n->stored_num = n->num;
+    }
     n->hb_next = n->now + MS(n->hb_phase_ms);
 }
 
-static void on_command(cycan_node_t *n, const cycan_command_t *m)
+static uint8_t reset_command(cycan_node_t *n, const cycan_command_t *m)
+{
+    if (n->enabled || n->estop) return CYCAN_CMDST_DENIED;
+    if (m->cmd == CYCAN_CMD_ENTER_BOOTLOADER && m->arg != (CYCAN_BOOT_INTENT | n->uid.uid16)) return CYCAN_CMDST_INVALID_ARG;
+    if ((m->cmd == CYCAN_CMD_REBOOT ? n->hal->reboot : n->hal->enter_bootloader) == NULL) return CYCAN_CMDST_UNSUPPORTED;
+    n->reset_pending = m->cmd;
+    n->reset_at = n->now + CYCAN_RESET_DELAY_US;
+    return CYCAN_CMDST_OK;
+}
+
+static void on_command(cycan_node_t *n, const cycan_command_t *m, bool broadcast, uint8_t estop_seq)
 {
     uint32_t result = 0;
     uint8_t st;
     switch (m->cmd) {
-    case CYCAN_CMD_REBOOT:
     case CYCAN_CMD_ENTER_BOOTLOADER:
-        if (n->enabled) st = CYCAN_CMDST_DENIED;
-        else if ((m->cmd == CYCAN_CMD_REBOOT ? n->hal->reboot : n->hal->enter_bootloader) == NULL) st = CYCAN_CMDST_UNSUPPORTED;
-        else {
-            st = CYCAN_CMDST_OK;
-            n->reset_pending = m->cmd;
-            n->reset_at = n->now + CYCAN_RESET_DELAY_US;
-        }
+        /* Studio's recovery broadcast (PROTOCOL 9.0) is meant for bootloaders that are
+         * starting up; running applications ignore it without a reply. */
+        if (broadcast && m->arg == CYCAN_BOOT_RECOVERY_ARG) return;
+        st = reset_command(n, m);
+        break;
+    case CYCAN_CMD_REBOOT:
+        st = reset_command(n, m);
         break;
     case CYCAN_CMD_SAVE_PARAMS:
-        st = cycan_save(n) ? CYCAN_CMDST_OK : CYCAN_CMDST_FAILED;
+        st = n->enabled ? CYCAN_CMDST_DENIED : cycan_save(n) ? CYCAN_CMDST_OK : CYCAN_CMDST_FAILED;
         break;
     case CYCAN_CMD_LOAD_DEFAULTS:
-        if (n->enabled) st = CYCAN_CMDST_DENIED;
-        else {
+        if (n->enabled) {
+            st = CYCAN_CMDST_DENIED;
+        } else {
             load_defaults(n, true);
-            n->unsaved = true;
+            touch(n);
             st = CYCAN_CMDST_OK;
         }
         break;
+    case CYCAN_CMD_LOAD_SAVED:
+        st = n->enabled ? CYCAN_CMDST_DENIED : load_saved(n);
+        break;
     case CYCAN_CMD_CLEAR_FAULTS:
+        /* PARAM_CRC is latched by the library, not a live condition: clearing faults is the
+         * operator's acknowledgement that the defaults are in use. */
+        cycan_fault_clear(n, CYCAN_FAULT_PARAM_CRC, CYCAN_FAULT_ACTIVE);
         n->fault_sticky = n->fault_active;
         st = CYCAN_CMDST_OK;
         break;
     case CYCAN_CMD_CLEAR_ESTOP:
-        n->estop = false;
-        cycan_fault_clear(n, CYCAN_FAULT_ESTOP, CYCAN_FAULT_ACTIVE);
-        st = CYCAN_CMDST_OK;
+        /* PROTOCOL 4.7: an ESTOP latched in this poll, or one that arrived after this
+         * CLEAR_ESTOP was queued, wins. */
+        if (n->estop_this_turn || estop_seq != n->estop_seen) {
+            st = CYCAN_CMDST_DENIED;
+        } else {
+            if (n->estop) {
+                n->estop = false;
+                cycan_fault_clear(n, CYCAN_FAULT_ESTOP, CYCAN_FAULT_ACTIVE);
+                n->ctrl_armed = 0; /* the target that was flowing before ESTOP must not resume */
+            }
+            st = CYCAN_CMDST_OK;
+        }
         break;
     default:
         if (n->cmd_pending) {
@@ -535,6 +571,16 @@ static void stream_recount(cycan_node_t *n)
     n->stream_slots = k;
 }
 
+/* PROTOCOL 8: unsupported periods round to the nearest supported one, i.e. the nearest
+ * multiple of the catalog's minimum period. */
+static uint32_t stream_period(const cycan_node_t *n, uint16_t period_100us)
+{
+    uint32_t step = n->app->stream_min_period_us > 100u ? n->app->stream_min_period_us : 100u;
+    uint32_t p = (uint32_t)period_100us * 100u;
+    if (p <= step) return step;
+    return (p + step / 2u) / step * step;
+}
+
 static void on_stream(cycan_node_t *n, uint8_t index, const uint8_t *d, uint8_t len)
 {
     if (index == CYCAN_STREAM_CONFIG) {
@@ -544,10 +590,9 @@ static void on_stream(cycan_node_t *n, uint8_t index, const uint8_t *d, uint8_t 
         stream_recount(n);
     } else if (index == CYCAN_STREAM_START) {
         cycan_stream_start_t m;
-        uint32_t period, min = n->app->stream_min_period_us > 100u ? n->app->stream_min_period_us : 100u;
+        uint32_t period;
         if (!cycan_dec_stream_start(d, len, &m)) return;
-        period = (uint32_t)m.period_100us * 100u;
-        if (period < min) period = min;
+        period = stream_period(n, m.period_100us);
         if (!n->stream_active || period != n->stream_period_us) {
             n->stream_active = true;
             n->stream_period_us = period;
@@ -570,7 +615,27 @@ static void on_fw(cycan_node_t *n)
     send(n, &f);
 }
 
-static void on_sys(cycan_node_t *n, uint8_t index, const uint8_t *d, uint8_t len)
+static void on_ctrl(cycan_node_t *n, uint32_t id, uint8_t index, const uint8_t *d, uint8_t len)
+{
+    uint16_t bit = BIT(index);
+    bool armed;
+    cycan_ctrl_t r;
+    /* PROTOCOL 7: CTRL is addressed to one board; both broadcast forms are ignored. */
+    if (CYCAN_ID_NUM(id) == CYCAN_NUM_BROADCAST || CYCAN_ID_DEVTYPE(id) == CYCAN_DEVTYPE_BROADCAST) return;
+    if (n->app->ctrl == NULL || !cycan_ctrl_allowed(n)) return;
+    armed = (n->ctrl_armed & bit) != 0u;
+    r = n->app->ctrl(n, index, d, len, armed);
+    /* Only valid frames feed the watchdog: garbage at our address must not keep a stale
+     * target alive. A drive command before the neutral one is ignored altogether. */
+    if (r == CYCAN_CTRL_INVALID || (r == CYCAN_CTRL_DRIVE && !armed)) return;
+    if (!cycan_ctrl_allowed(n)) return; /* the callback raised a fault */
+    if (r == CYCAN_CTRL_NEUTRAL) n->ctrl_armed |= bit;
+    n->ctrl_watch = true;
+    n->ctrl_last = n->now;
+    cycan_fault_clear(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);
+}
+
+static void on_sys(cycan_node_t *n, uint32_t id, uint8_t index, const uint8_t *d, uint8_t len, uint8_t estop_seq)
 {
     switch (index) {
     case CYCAN_SYS_ENUM_REQ: {
@@ -595,9 +660,6 @@ static void on_sys(cycan_node_t *n, uint8_t index, const uint8_t *d, uint8_t len
         if (m.uid_form ? m.uid48 == n->uid.uid48 : !silent(n)) identify(n, m.seconds);
         return;
     }
-    case CYCAN_SYS_ESTOP:
-        if (cycan_dec_estop(d, len)) latch_estop(n);
-        return;
     default:
         break;
     }
@@ -612,13 +674,13 @@ static void on_sys(cycan_node_t *n, uint8_t index, const uint8_t *d, uint8_t len
         cycan_name_set_t m;
         if (!cycan_dec_name_set(d, len, &m) || m.page > 2u) return;
         memcpy(n->name + 7u * m.page, m.bytes, 7);
-        n->unsaved = true;
+        touch(n);
         send_info(n, (uint8_t)(CYCAN_INFO_NAME_0 + m.page));
         break;
     }
     case CYCAN_SYS_COMMAND: {
         cycan_command_t m;
-        if (cycan_dec_command(d, len, &m)) on_command(n, &m);
+        if (cycan_dec_command(d, len, &m)) on_command(n, &m, CYCAN_ID_NUM(id) == CYCAN_NUM_BROADCAST, estop_seq);
         break;
     }
     case CYCAN_SYS_FAULT_REQ:
@@ -649,45 +711,41 @@ static void on_param(cycan_node_t *n, uint8_t index, const uint8_t *d, uint8_t l
     }
 }
 
-static void handle(cycan_node_t *n, uint32_t id, const uint8_t *d, uint8_t len)
+static void handle(cycan_node_t *n, const cycan_rx_entry_t *e)
 {
+    uint32_t id = e->id;
     uint8_t cls = CYCAN_ID_CLASS(id), index = CYCAN_ID_INDEX(id);
 
     if (cls == CYCAN_CLS_ENUM_RSP) {
         cycan_enum_rsp_t er;
-        if (CYCAN_ID_DEVTYPE(id) == n->app->devtype && !silent(n) && cycan_dec_enum_rsp(d, len, &er) && er.num == n->num &&
-            er.uid48 != n->uid.uid48)
+        if (CYCAN_ID_DEVTYPE(id) == n->app->devtype && !silent(n) && cycan_dec_enum_rsp(e->data, e->len, &er) &&
+            er.num == n->num && er.uid48 != n->uid.uid48)
             enter_conflict(n);
         return;
     }
     if (cls == CYCAN_CLS_SYS_RSP) {
         cycan_heartbeat_t hb;
         if (index == CYCAN_SYS_HEARTBEAT && CYCAN_ID_DEVTYPE(id) == n->app->devtype && CYCAN_ID_NUM(id) == n->num &&
-            !silent(n) && cycan_dec_heartbeat(d, len, &hb) && hb.uid16 != n->uid.uid16)
+            !silent(n) && cycan_dec_heartbeat(e->data, e->len, &hb) && hb.uid16 != n->uid.uid16)
             enter_conflict(n);
         return;
     }
     /* Re-check: NUM may have changed since the RX interrupt accepted the frame. */
     if (!cycan_accepts(id, n->app->devtype, n->num)) return;
     if (cls == CYCAN_CLS_SYS_REQ) {
-        on_sys(n, index, d, len);
+        on_sys(n, id, index, e->data, e->len, e->estop_seq);
         return;
     }
     if (silent(n)) return;
     switch (cls) {
     case CYCAN_CLS_CTRL:
-        /* CTRL layouts are per model, so a bus-wide broadcast cannot be a valid command. */
-        if (n->estop || CYCAN_ID_DEVTYPE(id) == CYCAN_DEVTYPE_BROADCAST) return;
-        n->ctrl_armed = true;
-        n->ctrl_last = n->now;
-        cycan_fault_clear(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);
-        if (n->app->ctrl != NULL) n->app->ctrl(n, index, d, len);
+        on_ctrl(n, id, index, e->data, e->len);
         break;
     case CYCAN_CLS_PARAM_REQ:
-        on_param(n, index, d, len);
+        on_param(n, index, e->data, e->len);
         break;
     case CYCAN_CLS_STREAM_REQ:
-        on_stream(n, index, d, len);
+        on_stream(n, index, e->data, e->len);
         break;
     case CYCAN_CLS_FW_REQ:
         on_fw(n);
@@ -719,29 +777,32 @@ static void run_stream(cycan_node_t *n)
 {
     cycan_stream_data_t m;
     cycan_frame_t f;
-    uint8_t i;
+    uint8_t i, slots;
     if (!n->stream_active) return;
     if ((n->now - n->stream_keepalive) > MS(CYCAN_STREAM_TIMEOUT_MS)) {
         n->stream_active = false;
         return;
     }
-    if (n->stream_slots == 0u || !due(n->now, n->stream_next)) return;
+    /* Classic mode sends a frame per slot; more than 4 would not fit the bus (PROTOCOL 8). */
+    slots = n->stream_slots;
+    if (!n->fd_active && slots > CYCAN_STREAM_CLASSIC_MAX_SLOTS) slots = CYCAN_STREAM_CLASSIC_MAX_SLOTS;
+    if (slots == 0u || !due(n->now, n->stream_next)) return;
     n->stream_next += n->stream_period_us;
     if (due(n->now, n->stream_next)) n->stream_next = n->now + n->stream_period_us;
 
-    for (i = 0; i < n->stream_slots; i++) {
+    for (i = 0; i < slots; i++) {
         if (n->app->signal_read == NULL || !n->app->signal_read(n, n->stream_sid[i], &m.values[i]))
             m.values[i] = cycan_bits_f32(0x7FC00000ul);
     }
     m.seq = n->stream_seq++;
-    m.t_100us = (uint16_t)(n->now / 100u);
+    m.t_100us = n->t100;
     if (n->fd_active) {
         m.first_slot = 0;
-        m.count = n->stream_slots;
+        m.count = slots;
         if (cycan_enc_stream_data(&f, n->app->devtype, n->num, &m)) send(n, &f);
         return;
     }
-    for (i = 0; i < n->stream_slots; i++) {
+    for (i = 0; i < slots; i++) {
         cycan_stream_data_t one;
         one.seq = m.seq;
         one.t_100us = m.t_100us;
@@ -766,14 +827,43 @@ static void run_identify(cycan_node_t *n)
     }
 }
 
+/* Lost frames are otherwise invisible to the host: show them as a CAN_ERR warning (sticky
+ * too, so a brief loss is still visible in FAULT_RSP). */
+static void check_losses(cycan_node_t *n)
+{
+    uint16_t ov = n->rx_overruns;
+    if (ov != n->seen_overruns || n->tx_dropped != n->seen_dropped) {
+        n->seen_overruns = ov;
+        n->seen_dropped = n->tx_dropped;
+        cycan_fault_set(n, CYCAN_FAULT_CAN_ERR, CYCAN_FAULT_WARN);
+        n->fault_sticky |= BIT(CYCAN_FAULT_CAN_ERR);
+        n->can_err_held = true;
+        n->can_err_until = n->now + MS(CYCAN_CAN_ERR_HOLD_MS);
+    } else if (n->can_err_held && due(n->now, n->can_err_until)) {
+        n->can_err_held = false;
+        cycan_fault_clear(n, CYCAN_FAULT_CAN_ERR, CYCAN_FAULT_WARN);
+    }
+}
+
+/* t_100us from its own accumulator: (uint16_t)(now / 100) would jump at the 32-bit wrap,
+ * because 2^32 / 100 is not a multiple of 65536. */
+static void advance_time(cycan_node_t *n, uint32_t now_us)
+{
+    uint32_t d = now_us - n->now;
+    uint32_t r = d % 100u + n->t100_rem;
+    n->t100 = (uint16_t)(n->t100 + (uint16_t)(d / 100u) + (uint16_t)(r / 100u));
+    n->t100_rem = (uint8_t)(r % 100u);
+    n->now = now_us;
+}
+
 /* ---- Public API ------------------------------------------------------------------ */
 
 cycan_init_result_t cycan_init(cycan_node_t *n, const cycan_app_t *app, const cycan_hal_t *hal, void *user, uint32_t now_us)
 {
     cycan_init_result_t res;
+    cycan_store_info_t info;
     uint16_t i, j;
     int16_t idx;
-    uint8_t rec[CYCAN_IDENTITY_SIZE];
 
     memset(n, 0, sizeof *n);
     n->app = app;
@@ -781,6 +871,7 @@ cycan_init_result_t cycan_init(cycan_node_t *n, const cycan_app_t *app, const cy
     n->user = user;
     n->now = now_us;
     n->num = CYCAN_NUM_UNASSIGNED;
+    n->stored_num = CYCAN_NUM_UNASSIGNED;
     if (hal->uid96 != NULL) hal->uid96(hal->ctx, n->uid96);
     cycan_uid_derive(n->uid96, &n->uid);
     /* Spread heartbeats of boards powered up together (PROTOCOL 4.1: 0..50 ms phase). */
@@ -797,20 +888,25 @@ cycan_init_result_t cycan_init(cycan_node_t *n, const cycan_app_t *app, const cy
     for (i = 0; i < CYCAN_STATUS_MAX; i++)
         n->idx_status[i] = find_param(app, (uint16_t)CYCAN_PID_STATUS_PERIOD(i), &idx) != NULL ? idx : -1;
 
-    for (i = 0; i < app->param_count; i++) pval_store(&app->params[i], app->params[i].def);
-    if (has_storage(hal) && hal->storage_read(hal->ctx, CYCAN_REGION_IDENTITY, 0, rec, sizeof rec))
-        n->num = cycan_identity_decode(rec);
-    res = params_load(n);
+    res = store_scan(n, &info);
+    apply_store(n, &info);
+    n->num = n->stored_num = info.num;
+    touch(n);
+    n->saved_crc = n->ram_crc;
     if (res == CYCAN_INIT_STORAGE_CORRUPT) {
-        load_defaults(n, false);
-        memset(n->name, 0, sizeof n->name);
-        n->fault_warn |= (uint16_t)(1u << CYCAN_FAULT_PARAM_CRC);
-        n->fault_sticky |= (uint16_t)(1u << CYCAN_FAULT_PARAM_CRC);
+        /* Neither copy survived: settings are back to defaults, which may be wrong for this
+         * machine (motor direction, limits). The board comes up unassigned so it cannot be
+         * driven under its old number, and in FAULT until SAVE_PARAMS or CLEAR_FAULTS. */
+        n->fault_active |= BIT(CYCAN_FAULT_PARAM_CRC);
+        n->fault_sticky |= BIT(CYCAN_FAULT_PARAM_CRC);
+        n->saved_crc = ~n->ram_crc;
     }
 
     /* can.data_bitrate is reboot-required: the value loaded now stays in effect. */
     n->data_bitrate = (uint8_t)(find_param(app, CYCAN_PID_CAN_DATA_BITRATE, &idx) != NULL ? param_u32(n, idx, 0) : 0u);
     n->fd_active = app->fd_capable && n->data_bitrate != CYCAN_DATA_BITRATE_CLASSIC && CYCAN_FRAME_MAX_DATA >= 64u;
+    /* PROTOCOL 4.1: the first heartbeat after power-up says BOOT, within 100 ms. */
+    n->boot_heartbeat = !silent(n);
     n->hb_next = now_us + MS(n->hb_phase_ms);
     for (i = 0; i < CYCAN_STATUS_MAX; i++) n->status_next[i] = now_us;
     for (i = 0; i < app->param_count; i++)
@@ -834,9 +930,10 @@ bool cycan_on_frame(cycan_node_t *n, uint32_t id, const uint8_t *data, uint8_t l
     } else if (!cycan_accepts(id, n->app->devtype, n->num)) {
         return false;
     } else if (cls == CYCAN_CLS_SYS_REQ && CYCAN_ID_INDEX(id) == CYCAN_SYS_ESTOP) {
-        /* Latched outside the ring so a full queue can never swallow it. */
+        /* Counted outside the ring so a full queue can never swallow it; the count also
+         * orders it against CLEAR_ESTOP frames already in the ring. */
         if (!cycan_dec_estop(data, len)) return false;
-        n->estop_rx = 1;
+        n->estop_seq = (uint8_t)(n->estop_seq + 1u);
         return true;
     }
     head = n->rx_head;
@@ -847,6 +944,7 @@ bool cycan_on_frame(cycan_node_t *n, uint32_t id, const uint8_t *data, uint8_t l
     }
     e = &n->rxq[head];
     e->id = id;
+    e->estop_seq = n->estop_seq;
     /* Node-bound messages fit in 8 bytes; a longer (FD) frame is only answered, not parsed. */
     e->len = len > 8u ? 8u : len;
     memcpy(e->data, data, e->len);
@@ -862,13 +960,11 @@ void cycan_on_tx_error(cycan_node_t *n, uint32_t id)
 
 void cycan_poll(cycan_node_t *n, uint32_t now_us)
 {
-    n->now = now_us;
+    advance_time(n, now_us);
     tx_flush(n);
 
-    if (n->estop_rx) {
-        n->estop_rx = 0;
-        latch_estop(n);
-    }
+    n->estop_this_turn = false;
+    check_estop(n);
     if (n->enum_tx_err) {
         n->enum_tx_err = 0;
         if (!n->enum_retried && !n->enum_pending) {
@@ -881,10 +977,11 @@ void cycan_poll(cycan_node_t *n, uint32_t now_us)
         cycan_rx_entry_t e = n->rxq[n->rx_tail];
         CYCAN_BARRIER();
         n->rx_tail = (uint8_t)((n->rx_tail + 1u) & RX_MASK);
-        handle(n, e.id, e.data, e.len);
+        handle(n, &e);
     }
+    check_estop(n); /* one that arrived while the ring was processed */
 
-    if (n->ctrl_armed) {
+    if (n->ctrl_watch) {
         uint32_t timeout = MS(param_u32(n, n->idx_ctrl_timeout, CYCAN_CTRL_TIMEOUT_DEFAULT_MS));
         if ((n->now - n->ctrl_last) > timeout) {
             cycan_fault_set(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);
@@ -892,6 +989,7 @@ void cycan_poll(cycan_node_t *n, uint32_t now_us)
         }
     }
     if (n->enum_pending && due(n->now, n->enum_due)) send_enum_rsp(n, false);
+    check_losses(n);
 
     if (!silent(n)) {
         if (due(n->now, n->hb_next)) {
@@ -935,7 +1033,7 @@ uint8_t cycan_data_bitrate(const cycan_node_t *n)
 
 bool cycan_ctrl_allowed(const cycan_node_t *n)
 {
-    return !silent(n) && !n->estop;
+    return !silent(n) && !n->estop && n->fault_active == 0u;
 }
 
 bool cycan_estop_latched(const cycan_node_t *n)
@@ -946,6 +1044,11 @@ bool cycan_estop_latched(const cycan_node_t *n)
 bool cycan_identify_active(const cycan_node_t *n)
 {
     return n->identify_on;
+}
+
+bool cycan_unsaved(const cycan_node_t *n)
+{
+    return n->ram_crc != n->saved_crc;
 }
 
 const char *cycan_name(const cycan_node_t *n, uint8_t *len)
@@ -963,18 +1066,22 @@ void cycan_set_enabled(cycan_node_t *n, bool enabled)
 
 void cycan_fault_set(cycan_node_t *n, uint8_t bit, cycan_fault_kind_t kind)
 {
-    uint16_t m = (uint16_t)(1u << (bit & 15u));
+    uint16_t m = BIT(bit & 15u);
+    bool fresh;
     if (kind == CYCAN_FAULT_WARN) {
         n->fault_warn |= m;
-    } else {
-        n->fault_active |= m;
-        n->fault_sticky |= m;
+        return;
     }
+    fresh = (n->fault_active & m) == 0u;
+    n->fault_active |= m;
+    n->fault_sticky |= m;
+    /* ESTOP has its own neutral reason (latch_estop). */
+    if (fresh && (bit & 15u) != CYCAN_FAULT_ESTOP) neutral(n, CYCAN_NEUTRAL_FAULT);
 }
 
 void cycan_fault_clear(cycan_node_t *n, uint8_t bit, cycan_fault_kind_t kind)
 {
-    uint16_t m = (uint16_t)~(1u << (bit & 15u));
+    uint16_t m = (uint16_t)~BIT(bit & 15u);
     if (kind == CYCAN_FAULT_WARN) n->fault_warn &= m;
     else n->fault_active &= m;
 }
