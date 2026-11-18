@@ -1,0 +1,69 @@
+.cy-progress {
+  --tone: var(--cy-accent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.cy-progress--ok {
+  --tone: var(--cy-ok);
+}
+.cy-progress--warn {
+  --tone: var(--cy-warn);
+}
+.cy-progress--caution {
+  --tone: var(--cy-caution);
+}
+.cy-progress--danger {
+  --tone: var(--cy-danger);
+}
+.cy-progress--neutral {
+  --tone: var(--cy-text-3);
+}
+.cy-progress__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--cy-fs-sm);
+}
+.cy-progress__label {
+  color: var(--cy-text-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cy-progress__pct {
+  color: var(--cy-text);
+  font-size: var(--cy-fs-xs);
+}
+.cy-progress__track {
+  position: relative;
+  height: 6px;
+  border-radius: var(--cy-r-full);
+  background: var(--cy-bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--cy-line-soft);
+  overflow: hidden;
+}
+.cy-progress--sm .cy-progress__track {
+  height: 4px;
+}
+.cy-progress__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--tone);
+  transition: width 200ms var(--cy-ease);
+}
+.cy-progress__fill.is-indeterminate {
+  position: absolute;
+  width: 35%;
+  animation: cy-indeterminate 1.3s var(--cy-ease) infinite;
+}
+@keyframes cy-indeterminate {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}

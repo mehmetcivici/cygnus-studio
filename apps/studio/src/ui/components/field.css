@@ -1,0 +1,92 @@
+/* Shared chrome for text-like inputs (TextField, NumberField, Select). */
+.cy-input {
+  --in-h: var(--cy-h-md);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--in-h);
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: var(--cy-r-md);
+  background: var(--cy-bg-sunken);
+  border: 1px solid var(--cy-line);
+  color: var(--cy-text);
+  transition:
+    border-color var(--cy-dur-fast),
+    box-shadow var(--cy-dur-fast),
+    background var(--cy-dur-fast);
+}
+[data-theme='light'] .cy-input {
+  background: var(--cy-panel);
+}
+.cy-input--sm {
+  --in-h: var(--cy-h-sm);
+  padding: 0 8px;
+  border-radius: var(--cy-r-sm);
+}
+.cy-input--lg {
+  --in-h: var(--cy-h-lg);
+}
+.cy-input--block {
+  display: flex;
+  width: 100%;
+}
+.cy-input:hover:not(.is-disabled) {
+  border-color: var(--cy-line-strong);
+}
+.cy-input:focus-within {
+  border-color: var(--cy-accent);
+  box-shadow: 0 0 0 3px var(--cy-accent-soft);
+}
+.cy-input.is-error {
+  border-color: var(--cy-danger);
+}
+.cy-input.is-error:focus-within {
+  box-shadow: 0 0 0 3px var(--cy-danger-soft);
+}
+.cy-input.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cy-input.is-readonly {
+  background: transparent;
+  border-style: dashed;
+}
+.cy-input__control {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: var(--cy-fs-md);
+  color: inherit;
+}
+.cy-input--sm .cy-input__control {
+  font-size: var(--cy-fs-sm);
+}
+.cy-input__control::placeholder {
+  color: var(--cy-text-disabled);
+}
+.cy-input__control:focus-visible {
+  box-shadow: none;
+}
+.cy-input__icon {
+  flex: none;
+  color: var(--cy-text-3);
+}
+.cy-input__affix {
+  flex: none;
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text-3);
+  white-space: nowrap;
+}
+.cy-field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--cy-fs-xs);
+  font-weight: 700;
+  color: var(--cy-danger);
+}

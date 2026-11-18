@@ -1,0 +1,39 @@
+.cy-tooltip-anchor {
+  display: inline-flex;
+  min-width: 0;
+}
+.cy-tooltip-anchor.is-block {
+  display: flex;
+}
+.cy-tooltip {
+  position: fixed;
+  z-index: var(--cy-z-tooltip);
+  max-width: 300px;
+  padding: 6px 9px;
+  border-radius: var(--cy-r-sm);
+  background: #e8eef7;
+  color: #0a1931;
+  font-size: var(--cy-fs-sm);
+  font-weight: 700;
+  line-height: 1.35;
+  box-shadow: var(--cy-shadow-2);
+  pointer-events: none;
+  opacity: 0;
+}
+[data-theme='light'] .cy-tooltip {
+  background: #10223f;
+  color: #ffffff;
+}
+.cy-tooltip.is-placed {
+  animation: cy-tooltip-in var(--cy-dur) var(--cy-ease) forwards;
+}
+@keyframes cy-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -1,0 +1,216 @@
+.cy-chart {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--cy-chart-bg);
+  border: 1px solid var(--cy-line);
+  border-radius: var(--cy-r-md);
+  overflow: hidden;
+}
+
+.cy-chart__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cy-sp-2);
+  height: 38px;
+  flex: none;
+  padding: 0 var(--cy-sp-2) 0 var(--cy-sp-3);
+  border-bottom: 1px solid var(--cy-line-soft);
+}
+
+.cy-chart__title {
+  font-weight: 700;
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text);
+  white-space: nowrap;
+}
+
+.cy-chart__mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--cy-r-full);
+  font-size: var(--cy-fs-2xs);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: var(--cy-ok);
+  background: var(--cy-ok-soft);
+}
+.cy-chart__mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: cy-chart-blink 1.2s ease-in-out infinite;
+}
+.cy-chart__mode.is-paused {
+  color: var(--cy-warn);
+  background: var(--cy-warn-soft);
+}
+.cy-chart__mode.is-paused .cy-chart__mode-dot {
+  animation: none;
+  border-radius: 1px;
+}
+@keyframes cy-chart-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.cy-chart__span {
+  font-size: var(--cy-fs-xs);
+  color: var(--cy-text-3);
+  white-space: nowrap;
+}
+.cy-chart__spacer {
+  flex: 1;
+}
+
+.cy-chart__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.cy-chart--legend-bottom .cy-chart__body {
+  flex-direction: column;
+}
+
+.cy-chart__plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.cy-chart__plot .uplot {
+  position: absolute;
+  inset: 0;
+  font-family: var(--cy-font-ui);
+}
+.cy-chart__plot .u-over {
+  cursor: crosshair;
+}
+.cy-chart.is-paused .cy-chart__plot .u-over,
+.cy-chart--static .cy-chart__plot .u-over {
+  cursor: grab;
+}
+.cy-chart__plot .u-cursor-x {
+  border-right: 1px dashed var(--cy-text-3);
+}
+.cy-chart__plot .u-cursor-y {
+  border-bottom: 1px dashed var(--cy-text-3);
+}
+
+/* Legend */
+.cy-chart__legend {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: var(--cy-fs-sm);
+}
+.cy-chart__legend--right {
+  width: 216px;
+  border-left: 1px solid var(--cy-line-soft);
+  background: color-mix(in srgb, var(--cy-panel) 55%, transparent);
+}
+.cy-chart__legend--bottom {
+  border-top: 1px solid var(--cy-line-soft);
+  flex-direction: row;
+  align-items: center;
+  gap: var(--cy-sp-2);
+  padding: 4px var(--cy-sp-2);
+}
+.cy-chart__legend-head {
+  padding: 8px 12px 4px;
+}
+.cy-chart__legend--bottom .cy-chart__legend-head {
+  padding: 0 4px;
+}
+.cy-chart__legend-time {
+  font-size: var(--cy-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--cy-text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cy-chart__legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px 6px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.cy-chart__legend--bottom .cy-chart__legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  padding: 0;
+}
+.cy-chart__legend-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--cy-r-sm);
+  background: transparent;
+  text-align: left;
+  color: var(--cy-text-2);
+  transition: background var(--cy-dur-fast);
+}
+.cy-chart__legend--bottom .cy-chart__legend-item {
+  width: auto;
+  min-height: 24px;
+}
+.cy-chart__legend-item:hover {
+  background: var(--cy-hover);
+}
+.cy-chart__legend-item.is-off {
+  color: var(--cy-text-disabled);
+}
+.cy-chart__legend-item.is-off .cy-chart__swatch {
+  opacity: 0.3;
+}
+.cy-chart__legend-item.is-off .cy-chart__legend-value {
+  visibility: hidden;
+}
+.cy-chart__swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--swatch);
+}
+.cy-chart__swatch.is-dashed {
+  background: repeating-linear-gradient(90deg, var(--swatch) 0 4px, transparent 4px 7px);
+}
+.cy-chart__legend-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cy-chart__axis-tag {
+  margin-left: 5px;
+  font-size: 9px;
+  font-weight: 900;
+  color: var(--cy-text-3);
+  border: 1px solid var(--cy-line);
+  border-radius: 3px;
+  padding: 0 3px;
+  vertical-align: 1px;
+}
+.cy-chart__legend-value {
+  font-family: var(--cy-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--cy-fs-xs);
+  color: var(--cy-text);
+  white-space: nowrap;
+  text-align: right;
+}

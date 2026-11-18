@@ -12,6 +12,7 @@ packages/protocol/      @cygnus/protocol — saf TypeScript, DOM/Node bağımlı
   src/transport/        Transport arayüzü, slcan codec'i
   src/host/             host istemcisi: CygnusBus, DeviceHandle, keşif, parametre, akış, firmware
   src/legacy/           Cyncoder v3 (FRC) sürücüsü
+packages/vehicles/      @cygnus/vehicles — araç şablonları (saf veri) ve yapılandırma planlayıcısı
 packages/simulator/     @cygnus/simulator — sanal hat + sanal kartlar (firmware tarafının referans gerçeklemesi)
 apps/studio/            React + Vite arayüz; src-tauri/ masaüstü kabuğu
 firmware/cycan/         Kartlar için taşınabilir C kütüphanesi (CyCAN düğüm tarafı) + host testleri
@@ -55,12 +56,13 @@ interface Scheduler { now(): number; setTimeout(fn: () => void, ms: number): unk
 
 Hedef: pitte, güneş altında, eldivenle, acele içinde kullanılabilen; ilk açılışta donanımsız bile etkileyen bir araç.
 
-Gezinme (sol şerit): **Hat** · **Cihaz** · **Tuner** · **Grafik** · **CAN İzleyici** · **Firmware** · **Proje**.
+Gezinme (sol şerit): **Hat** · **Araç** · **Cihaz** · **Tuner** · **Grafik** · **CAN İzleyici** · **Firmware** · **Proje**.
 Üst çubuk: bağlantı seçici (Simülatör senaryosu / seri port), hat sağlığı (yük %, çerçeve/s, hata), dil (TR/EN), tema, her zaman görünen **ACİL DURDUR** (boşluk tuşu).
 
 | Ekran | İçerik |
 |---|---|
 | Hat | Bulunan kartlar (durum noktası, ad, model, numara, firmware, hata), çakışma/atanmamış kart çözücü, LED ile tanıt, hat şeması, güç özeti |
+| Araç | Araç şablonu seçimi, kartları şase şemasındaki yuvalara atama, motor testi, canlı şema (bkz. `docs/VEHICLES.md`) |
 | Cihaz | Canlı kutucuklar, modele özel görsel (ör. kanal akım çubukları, açı kadranı, yapay ufuk), katalogdan üretilen ayar formu (kirli durum, uygula, karta kaydet, geri al, varsayılan), eylemler, hatalar, öz-test |
 | Tuner | Döngü seçimi (akım/hız/konum), hedef üreteci (elle, basamak, kare, sinüs, rampa), kazanç düzenleme, yüksek hızlı grafik, basamak yanıtı ölçütleri, koşu geçmişi ve karşılaştırma, kazanç önerisi |
 | Grafik | Her karttan çoklu sinyal, duraklat/yakınlaştır/imleç, kayıt ve CSV dışa aktarma |

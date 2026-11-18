@@ -1,0 +1,133 @@
+.gal {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 1480px;
+}
+.gal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gal-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gal-section__title {
+  font-size: var(--cy-fs-2xs);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cy-text-3);
+}
+.gal-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+.gal-grid {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+.gal-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.gal-grid--meters {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: stretch;
+}
+.gal-grid--form {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+.gal-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.gal-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.gal-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cy-text-3);
+  font-size: var(--cy-fs-sm);
+}
+.gal-bars {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 4px 0;
+}
+.gal-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  justify-items: center;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding-top: 8px;
+}
+.gal-dirty {
+  margin-right: auto;
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text-3);
+}
+.gal-fps {
+  font-size: var(--cy-fs-xs);
+  color: var(--cy-text-3);
+  margin-right: 8px;
+  min-width: 170px;
+  text-align: right;
+}
+.gal-devices {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+.gal-device {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.gal-device__main {
+  flex: 1;
+  min-width: 0;
+}
+.gal-device__name {
+  font-weight: 700;
+  color: var(--cy-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gal-device__num {
+  font-family: var(--cy-font-mono);
+  font-weight: 500;
+  color: var(--cy-accent);
+}
+.gal-device__note {
+  font-size: var(--cy-fs-xs);
+  color: var(--cy-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gal-pane {
+  height: 100%;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gal-pane--alt {
+  background: var(--cy-panel-2);
+  border-radius: 0 var(--cy-r-lg) var(--cy-r-lg) 0;
+}

@@ -1,0 +1,98 @@
+.cy-formrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  align-items: center;
+  column-gap: 14px;
+  padding: 9px 4px 9px 12px;
+  border-radius: var(--cy-r-md);
+  position: relative;
+  transition: background var(--cy-dur-fast);
+}
+.cy-formrow + .cy-formrow {
+  box-shadow: 0 -1px 0 var(--cy-line-soft);
+}
+.cy-formrow:hover {
+  background: var(--cy-hover);
+}
+.cy-formrow.is-dirty::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--cy-warn);
+}
+.cy-formrow.is-disabled {
+  opacity: 0.55;
+}
+.cy-formrow--vertical {
+  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-areas: 'text reset' 'control control';
+  row-gap: 6px;
+}
+.cy-formrow--vertical .cy-formrow__text {
+  grid-area: text;
+}
+.cy-formrow--vertical .cy-formrow__control {
+  grid-area: control;
+}
+.cy-formrow--vertical .cy-formrow__reset {
+  grid-area: reset;
+}
+.cy-formrow__text {
+  min-width: 0;
+}
+.cy-formrow__label-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.cy-formrow__label {
+  font-size: var(--cy-fs-md);
+  font-weight: 700;
+  color: var(--cy-text);
+}
+.cy-formrow__dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cy-warn);
+}
+.cy-formrow__help {
+  margin-top: 2px;
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text-3);
+  line-height: 1.4;
+}
+.cy-formrow__meta {
+  margin-right: 8px;
+  font-family: var(--cy-font-mono);
+  font-size: var(--cy-fs-2xs);
+  color: var(--cy-text-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--cy-panel-2);
+  border: 1px solid var(--cy-line-soft);
+}
+.cy-formrow__error {
+  margin-top: 3px;
+  font-size: var(--cy-fs-xs);
+  font-weight: 700;
+  color: var(--cy-danger);
+}
+.cy-formrow__control {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.cy-formrow--vertical .cy-formrow__control {
+  justify-content: stretch;
+}
+.cy-formrow__reset {
+  display: flex;
+  justify-content: center;
+}

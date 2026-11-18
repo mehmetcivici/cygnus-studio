@@ -1,0 +1,13 @@
+.cy-spinner {
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: cy-spin 0.7s linear infinite;
+}
+@keyframes cy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

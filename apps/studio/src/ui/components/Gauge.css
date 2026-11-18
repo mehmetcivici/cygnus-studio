@@ -1,0 +1,75 @@
+.cy-gauge {
+  position: relative;
+  max-width: 100%;
+  container-type: inline-size;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+}
+.cy-gauge__svg {
+  width: 100%;
+  display: block;
+  overflow: visible;
+}
+.cy-gauge__track {
+  fill: none;
+  stroke: var(--cy-bg-sunken);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+[data-theme='light'] .cy-gauge__track {
+  stroke: var(--cy-panel-3);
+}
+.cy-gauge__zone {
+  fill: none;
+  stroke-width: 1.6;
+  opacity: 0.75;
+}
+.cy-gauge__value {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+  transition: stroke 200ms;
+}
+.cy-gauge__knob {
+  fill: var(--cy-panel);
+  stroke-width: 2.2;
+}
+.cy-gauge__limit {
+  font-family: var(--cy-font-mono);
+  font-size: 6px;
+  fill: var(--cy-text-3);
+}
+.cy-gauge__readout {
+  position: absolute;
+  top: 38%;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px;
+}
+.cy-gauge__num {
+  font-family: var(--cy-font-mono);
+  font-variant-numeric: tabular-nums;
+  /* Scales with the rendered width so the readout never collides with the arc. */
+  font-size: clamp(14px, 15.5cqi, 30px);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  color: var(--cy-text);
+}
+.cy-gauge__unit {
+  font-size: var(--cy-fs-sm);
+  font-weight: 700;
+  color: var(--cy-text-3);
+}
+.cy-gauge__label {
+  margin-top: -4px;
+  font-size: var(--cy-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--cy-text-3);
+}

@@ -1,0 +1,69 @@
+.cy-numfield {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+  vertical-align: middle;
+}
+.cy-numfield .cy-input {
+  padding-right: 2px;
+}
+.cy-numfield__input {
+  font-family: var(--cy-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--cy-fs-md);
+  letter-spacing: -0.01em;
+  text-align: right;
+}
+.cy-input--sm .cy-numfield__input {
+  font-size: var(--cy-fs-sm);
+}
+.cy-numfield__unit {
+  min-width: 0;
+  font-size: var(--cy-fs-xs);
+  font-weight: 700;
+}
+.cy-numfield__steppers {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  justify-content: center;
+  gap: 0;
+  width: 16px;
+  margin-left: 1px;
+  opacity: 0;
+  transition: opacity var(--cy-dur-fast);
+}
+.cy-input:hover .cy-numfield__steppers,
+.cy-input:focus-within .cy-numfield__steppers {
+  opacity: 1;
+}
+.cy-numfield__steppers button {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  max-height: 13px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--cy-text-3);
+}
+.cy-numfield__steppers button:hover {
+  background: var(--cy-hover);
+  color: var(--cy-accent);
+}
+.cy-numfield__dirty {
+  position: absolute;
+  left: -1px;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--cy-warn);
+}
+.cy-input.is-pending .cy-numfield__dirty {
+  background: var(--cy-accent);
+}
+.cy-input.is-pending {
+  border-color: var(--cy-accent-line);
+}

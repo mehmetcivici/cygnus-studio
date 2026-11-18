@@ -1,0 +1,121 @@
+.cy-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: var(--cy-z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.cy-toast {
+  --tone: var(--cy-accent);
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 10px 12px 14px;
+  border-radius: var(--cy-r-lg);
+  background: var(--cy-panel-2);
+  border: 1px solid var(--cy-line-strong);
+  box-shadow: var(--cy-shadow-2);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: cy-toast-in 220ms var(--cy-ease);
+}
+[data-theme='light'] .cy-toast {
+  background: var(--cy-panel);
+}
+.cy-toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tone);
+}
+.cy-toast--success {
+  --tone: var(--cy-ok);
+}
+.cy-toast--error {
+  --tone: var(--cy-danger);
+}
+.cy-toast--warn {
+  --tone: var(--cy-warn);
+}
+.cy-toast__icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--tone);
+}
+.cy-toast__body {
+  flex: 1;
+  min-width: 0;
+}
+.cy-toast__title {
+  font-weight: 700;
+  font-size: var(--cy-fs-md);
+  color: var(--cy-text);
+  line-height: 1.35;
+}
+.cy-toast__desc {
+  margin-top: 2px;
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text-3);
+}
+.cy-toast__action {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--cy-line-strong);
+  border-radius: var(--cy-r-sm);
+  background: transparent;
+  color: var(--cy-accent);
+  font-weight: 700;
+  font-size: var(--cy-fs-sm);
+}
+.cy-toast__action:hover {
+  background: var(--cy-accent-soft);
+}
+.cy-toast__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cy-r-sm);
+  background: transparent;
+  color: var(--cy-text-3);
+}
+.cy-toast__close:hover {
+  background: var(--cy-hover);
+  color: var(--cy-text);
+}
+.cy-toast__timer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--tone);
+  opacity: 0.4;
+  transform-origin: left;
+  animation: cy-toast-timer linear forwards;
+}
+@keyframes cy-toast-timer {
+  to {
+    transform: scaleX(0);
+  }
+}
+@keyframes cy-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}

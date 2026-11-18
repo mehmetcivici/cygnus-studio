@@ -1,0 +1,80 @@
+.cy-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cy-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--cy-text-3);
+  font-weight: 700;
+  font-size: var(--cy-fs-md);
+  white-space: nowrap;
+  transition:
+    color var(--cy-dur-fast),
+    background var(--cy-dur-fast),
+    box-shadow var(--cy-dur-fast);
+}
+.cy-tab:hover:not(:disabled) {
+  color: var(--cy-text);
+}
+.cy-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cy-tab__badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--cy-r-full);
+  background: var(--cy-panel-3);
+  color: var(--cy-text-2);
+  font-family: var(--cy-font-mono);
+  font-size: var(--cy-fs-2xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cy-tabs--line {
+  border-bottom: 1px solid var(--cy-line);
+  gap: 18px;
+}
+.cy-tabs--line .cy-tab {
+  height: 40px;
+  padding: 0 2px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.cy-tabs--line .cy-tab.is-selected {
+  color: var(--cy-text);
+  border-bottom-color: var(--cy-accent);
+}
+.cy-tabs--line .cy-tab.is-selected svg {
+  color: var(--cy-accent);
+}
+
+.cy-tabs--pill .cy-tab {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--cy-r-md);
+  font-size: var(--cy-fs-sm);
+}
+.cy-tabs--pill .cy-tab:hover:not(:disabled) {
+  background: var(--cy-hover);
+}
+.cy-tabs--pill .cy-tab.is-selected {
+  color: var(--cy-accent);
+  background: var(--cy-accent-soft);
+}
+.cy-tab.is-selected .cy-tab__badge {
+  background: var(--cy-accent-soft);
+  color: var(--cy-accent);
+}

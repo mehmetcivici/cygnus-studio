@@ -1,0 +1,68 @@
+.cy-toggle {
+  --on: var(--cy-accent);
+  --tw: 34px;
+  --th: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+}
+.cy-toggle--sm {
+  --tw: 28px;
+  --th: 16px;
+}
+.cy-toggle--ok {
+  --on: var(--cy-ok);
+}
+.cy-toggle--danger {
+  --on: var(--cy-danger);
+}
+.cy-toggle.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cy-toggle__track {
+  position: relative;
+  flex: none;
+  width: var(--tw);
+  height: var(--th);
+  padding: 0;
+  border-radius: var(--cy-r-full);
+  border: 1px solid var(--cy-line-strong);
+  background: var(--cy-bg-sunken);
+  transition:
+    background var(--cy-dur) var(--cy-ease),
+    border-color var(--cy-dur) var(--cy-ease);
+}
+.cy-toggle__track:focus-visible {
+  border-radius: var(--cy-r-full);
+}
+.cy-toggle__track:disabled {
+  cursor: not-allowed;
+}
+.cy-toggle__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--th) - 6px);
+  height: calc(var(--th) - 6px);
+  border-radius: 50%;
+  background: var(--cy-text-3);
+  transition:
+    transform var(--cy-dur) var(--cy-ease),
+    background var(--cy-dur) var(--cy-ease);
+}
+.cy-toggle__track.is-on {
+  background: var(--on);
+  border-color: var(--on);
+}
+.cy-toggle__track.is-on .cy-toggle__thumb {
+  transform: translateX(calc(var(--tw) - var(--th)));
+  background: #fff;
+}
+.cy-toggle__label {
+  font-size: var(--cy-fs-md);
+  color: var(--cy-text-2);
+}

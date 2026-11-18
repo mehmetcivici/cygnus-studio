@@ -1,0 +1,87 @@
+.cy-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cy-z-modal);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--cy-overlay);
+  backdrop-filter: blur(3px);
+  animation: cy-fade-in var(--cy-dur) var(--cy-ease);
+}
+.cy-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: calc(100vh - 48px);
+  background: var(--cy-panel);
+  border: 1px solid var(--cy-line-strong);
+  border-radius: var(--cy-r-xl);
+  box-shadow: var(--cy-shadow-3);
+  animation: cy-modal-in 200ms var(--cy-ease);
+}
+.cy-modal:focus-visible {
+  box-shadow: var(--cy-shadow-3);
+}
+.cy-modal--sm {
+  max-width: 440px;
+}
+.cy-modal--md {
+  max-width: 600px;
+}
+.cy-modal--lg {
+  max-width: 880px;
+}
+.cy-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 14px 4px 22px;
+}
+.cy-modal__title {
+  flex: 1;
+  font-size: var(--cy-fs-lg);
+  font-weight: 700;
+}
+.cy-modal__body {
+  padding: 10px 22px 18px;
+  overflow: auto;
+  color: var(--cy-text-2);
+}
+.cy-modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--cy-line-soft);
+}
+.cy-confirm {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.cy-confirm__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--cy-danger);
+  background: var(--cy-danger-soft);
+}
+.cy-confirm__msg {
+  padding-top: 2px;
+  line-height: 1.5;
+}
+@keyframes cy-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes cy-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}

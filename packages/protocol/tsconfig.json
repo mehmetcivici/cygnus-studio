@@ -1,1 +1,9 @@
-{ "extends": "../../tsconfig.base.json", "include": ["src", "test"] }
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No ambient Node/DOM types: the package must stay runtime-neutral.
+    "types": [],
+    "resolveJsonModule": true
+  },
+  "include": ["src", "test"]
+}

@@ -1,0 +1,48 @@
+.cy-check {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+}
+.cy-check.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cy-check__input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.cy-check__box {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  border: 1.5px solid var(--cy-line-strong);
+  background: var(--cy-bg-sunken);
+  color: transparent;
+  transition:
+    background var(--cy-dur-fast),
+    border-color var(--cy-dur-fast);
+}
+.cy-check:hover .cy-check__box {
+  border-color: var(--cy-accent);
+}
+.cy-check__box.is-on {
+  background: var(--cy-accent);
+  border-color: var(--cy-accent);
+  color: var(--cy-text-on-accent);
+}
+.cy-check__input:focus-visible + .cy-check__box {
+  box-shadow: var(--cy-focus);
+}
+.cy-check__label {
+  font-size: var(--cy-fs-md);
+  color: var(--cy-text-2);
+}

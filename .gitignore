@@ -7,3 +7,4 @@ target/
 coverage/
 test-results/
 apps/studio/src-tauri/gen/
+dist-demo/

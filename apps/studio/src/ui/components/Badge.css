@@ -1,0 +1,69 @@
+.cy-badge {
+  --tone: var(--cy-text-2);
+  --tone-soft: var(--cy-panel-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--cy-r-sm);
+  font-size: var(--cy-fs-xs);
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+  flex: none;
+}
+.cy-badge--sm {
+  height: 17px;
+  padding: 0 5px;
+  font-size: var(--cy-fs-2xs);
+  border-radius: var(--cy-r-xs);
+}
+.cy-badge--mono {
+  font-family: var(--cy-font-mono);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.cy-badge--accent {
+  --tone: var(--cy-accent);
+  --tone-soft: var(--cy-accent-soft);
+}
+.cy-badge--ok {
+  --tone: var(--cy-ok);
+  --tone-soft: var(--cy-ok-soft);
+}
+.cy-badge--warn {
+  --tone: var(--cy-warn);
+  --tone-soft: var(--cy-warn-soft);
+}
+.cy-badge--caution {
+  --tone: var(--cy-caution);
+  --tone-soft: var(--cy-caution-soft);
+}
+.cy-badge--danger {
+  --tone: var(--cy-danger);
+  --tone-soft: var(--cy-danger-soft);
+}
+.cy-badge--soft {
+  color: var(--tone);
+  background: var(--tone-soft);
+}
+.cy-badge--neutral.cy-badge--soft {
+  color: var(--cy-text-2);
+}
+.cy-badge--solid {
+  color: var(--cy-text-on-accent);
+  background: var(--tone);
+}
+.cy-badge--neutral.cy-badge--solid {
+  background: var(--cy-text-3);
+  color: var(--cy-bg);
+}
+.cy-badge--danger.cy-badge--solid {
+  color: #fff;
+}
+.cy-badge--outline {
+  color: var(--tone);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 50%, transparent) inset;
+}

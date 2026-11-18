@@ -1,0 +1,178 @@
+/*
+ * Design tokens. Raw palette values come from docs/ARCHITECTURE.md ("Tasarım dili").
+ * Components only consume the semantic variables below, never hex values, so the
+ * light theme (outdoor / pit use in sunlight) is a pure token swap.
+ */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --cy-bg: #0a1931;
+  --cy-bg-sunken: #071327;
+  --cy-panel: #0f2347;
+  --cy-panel-2: #152a52;
+  --cy-panel-3: #1a3260;
+  --cy-line: #22396b;
+  --cy-line-soft: rgba(34, 57, 107, 0.55);
+  --cy-line-strong: #2e4a82;
+  --cy-selected: #163a6b;
+  --cy-hover: rgba(79, 195, 234, 0.06);
+  --cy-press: rgba(79, 195, 234, 0.12);
+  --cy-overlay: rgba(3, 9, 20, 0.66);
+
+  /* Text */
+  --cy-text: #ffffff;
+  --cy-text-2: #c9d6ea;
+  --cy-text-3: #8fa3bf;
+  --cy-text-disabled: #566b8c;
+  --cy-text-on-accent: #04172b;
+
+  /* Accent + status */
+  --cy-accent: #4fc3ea;
+  --cy-accent-hover: #74d2f0;
+  --cy-accent-soft: rgba(79, 195, 234, 0.14);
+  --cy-accent-line: rgba(79, 195, 234, 0.45);
+  --cy-ok: #3ddc84;
+  --cy-ok-soft: rgba(61, 220, 132, 0.14);
+  --cy-warn: #f2c94c;
+  --cy-warn-soft: rgba(242, 201, 76, 0.14);
+  --cy-caution: #f28c3b;
+  --cy-caution-soft: rgba(242, 140, 59, 0.15);
+  --cy-danger: #f2685b;
+  --cy-danger-soft: rgba(242, 104, 91, 0.15);
+  --cy-danger-strong: #e0483a;
+  --cy-offline: #5d7192;
+  --cy-estop: #d93a2b;
+  --cy-estop-hover: #ec4a3a;
+
+  /* Chart palette: ordered for maximum adjacent contrast on the dark panel. */
+  --cy-chart-1: #4fc3ea;
+  --cy-chart-2: #f2c94c;
+  --cy-chart-3: #3ddc84;
+  --cy-chart-4: #f28c3b;
+  --cy-chart-5: #b48cf2;
+  --cy-chart-6: #f2685b;
+  --cy-chart-7: #6fa8ff;
+  --cy-chart-8: #ef8fc9;
+  --cy-chart-grid: rgba(143, 163, 191, 0.12);
+  --cy-chart-axis: #8fa3bf;
+  --cy-chart-bg: #0b1b38;
+
+  /* Elevation */
+  --cy-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.025) inset, 0 1px 2px rgba(0, 0, 0, 0.25);
+  --cy-shadow-2: 0 6px 18px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --cy-shadow-3: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --cy-focus: 0 0 0 2px var(--cy-bg), 0 0 0 4px var(--cy-accent);
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  --cy-bg: #eef2f7;
+  --cy-bg-sunken: #e3e9f1;
+  --cy-panel: #ffffff;
+  --cy-panel-2: #f4f7fb;
+  --cy-panel-3: #e9eff6;
+  --cy-line: #d3dce8;
+  --cy-line-soft: rgba(211, 220, 232, 0.7);
+  --cy-line-strong: #b5c3d6;
+  --cy-selected: #dcecf8;
+  --cy-hover: rgba(10, 25, 49, 0.04);
+  --cy-press: rgba(10, 25, 49, 0.08);
+  --cy-overlay: rgba(10, 25, 49, 0.42);
+
+  --cy-text: #0a1931;
+  --cy-text-2: #2b4166;
+  --cy-text-3: #5a6e8c;
+  --cy-text-disabled: #9aa9bf;
+  --cy-text-on-accent: #ffffff;
+
+  --cy-accent: #0b7fae;
+  --cy-accent-hover: #096d96;
+  --cy-accent-soft: rgba(11, 127, 174, 0.1);
+  --cy-accent-line: rgba(11, 127, 174, 0.4);
+  --cy-ok: #16904d;
+  --cy-ok-soft: rgba(22, 144, 77, 0.11);
+  --cy-warn: #a87b00;
+  --cy-warn-soft: rgba(212, 160, 0, 0.14);
+  --cy-caution: #c25a12;
+  --cy-caution-soft: rgba(194, 90, 18, 0.11);
+  --cy-danger: #cf3a2c;
+  --cy-danger-soft: rgba(207, 58, 44, 0.1);
+  --cy-danger-strong: #b52e21;
+  --cy-offline: #8c9bb2;
+  --cy-estop: #d22f20;
+  --cy-estop-hover: #b8271a;
+
+  --cy-chart-1: #0b7fae;
+  --cy-chart-2: #b98500;
+  --cy-chart-3: #14914c;
+  --cy-chart-4: #d4631a;
+  --cy-chart-5: #7b4fd1;
+  --cy-chart-6: #cf3a2c;
+  --cy-chart-7: #2f6fdb;
+  --cy-chart-8: #c2408f;
+  --cy-chart-grid: rgba(10, 25, 49, 0.08);
+  --cy-chart-axis: #5a6e8c;
+  --cy-chart-bg: #ffffff;
+
+  --cy-shadow-1: 0 1px 2px rgba(10, 25, 49, 0.06);
+  --cy-shadow-2: 0 6px 18px rgba(10, 25, 49, 0.1), 0 1px 3px rgba(10, 25, 49, 0.08);
+  --cy-shadow-3: 0 24px 64px rgba(10, 25, 49, 0.2), 0 2px 8px rgba(10, 25, 49, 0.1);
+  --cy-focus: 0 0 0 2px var(--cy-bg), 0 0 0 4px var(--cy-accent);
+}
+
+/* Theme-independent scales */
+:root {
+  --cy-font-ui: 'Lato', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --cy-font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Type scale (px): tight, tool-like */
+  --cy-fs-2xs: 10.5px;
+  --cy-fs-xs: 11.5px;
+  --cy-fs-sm: 12.5px;
+  --cy-fs-md: 13.5px;
+  --cy-fs-lg: 15px;
+  --cy-fs-xl: 18px;
+  --cy-fs-2xl: 22px;
+  --cy-fs-3xl: 28px;
+  --cy-fs-4xl: 36px;
+  --cy-lh-tight: 1.2;
+  --cy-lh: 1.45;
+  --cy-tracking-caps: 0.08em;
+
+  /* Spacing (4px grid) */
+  --cy-sp-0: 2px;
+  --cy-sp-1: 4px;
+  --cy-sp-2: 8px;
+  --cy-sp-3: 12px;
+  --cy-sp-4: 16px;
+  --cy-sp-5: 20px;
+  --cy-sp-6: 24px;
+  --cy-sp-8: 32px;
+  --cy-sp-10: 40px;
+
+  /* Radii */
+  --cy-r-xs: 3px;
+  --cy-r-sm: 5px;
+  --cy-r-md: 7px;
+  --cy-r-lg: 10px;
+  --cy-r-xl: 14px;
+  --cy-r-full: 999px;
+
+  /* Control heights: md is glove-friendly but still dense */
+  --cy-h-sm: 26px;
+  --cy-h-md: 32px;
+  --cy-h-lg: 40px;
+
+  --cy-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --cy-dur-fast: 90ms;
+  --cy-dur: 160ms;
+
+  --cy-z-sticky: 5;
+  --cy-z-popover: 50;
+  --cy-z-modal: 100;
+  --cy-z-toast: 200;
+  --cy-z-tooltip: 300;
+}

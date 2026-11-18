@@ -72,7 +72,7 @@ Kart, kendisine giden bir çerçeveyi şu koşulda kabul eder: `MFR` eşleşir *
 
 ### 3.1 Kart kimliği (UID)
 
-Her kartın 96 bitlik MCU UID'si vardır. Türetilen değerler:
+Her kartın 96 bitlik MCU UID'si vardır (bayt sırası INFO sayfa 1–2'deki sıradır). Türetilen değerler:
 
 ```
 uid48  = FNV-1a-64(uid96 baytları) & 0xFFFF_FFFF_FFFF
@@ -123,7 +123,7 @@ Host 1500 ms heartbeat almazsa kartı **kayıp** sayar.
 
 ### 4.2 IDENTIFY (SYS_REQ/2)
 
-Adresli: `[seconds u8]` (0 = kapat). UID'li yayın: `[uid48 6B] [seconds u8]`. Kart LED'ini belirgin biçimde yakıp söndürür.
+Adresli: `[seconds u8]` (0 = kapat). UID'li yayın: `[uid48 6B] [seconds u8]`. İki biçim yük uzunluğundan (1 / 7 bayt) ayırt edilir; çerçeve dolgulanmaz. Kart LED'ini belirgin biçimde yakıp söndürür.
 
 ### 4.3 INFO_REQ (SYS_REQ/3) `[page u8]` → INFO_RSP (SYS_RSP/3) `[page u8] [7 bayt]`
 
@@ -188,6 +188,8 @@ Katalogdaki `controls` tanımlar. Ortak kural: eyleyici, `ctrl.timeout_ms` için
 CTRL/0 SET: [mode u8] [flags u8] [0 0] [value f32]
 ```
 
+`flags` ayrılmıştır; host 0 gönderir, kart yok sayar.
+
 ## 8. Yüksek hızlı akış (STREAM) — tuner grafikleri
 
 Her telemetri sinyalinin katalogda bir `sid`'i vardır ve `f32` olarak akıtılabilir.
@@ -199,7 +201,8 @@ STOP   (STREAM_REQ/2): []
 DATA   (STREAM_RSP/0): [seq u8] [first_slot u8] [t_100us u16] [f32 × k]
 ```
 
-- FD kipinde tek `DATA` çerçevesi dolu yuvaların hepsini taşır (k ≤ 15). Klasik kipte her yuva ayrı çerçevedir (k = 1, `first_slot` = yuva no).
+- Host yuvaları 0'dan başlayarak boşluksuz doldurur. `DATA` içindeki değerler `first_slot`'tan başlayan ardışık yuvalara aittir.
+- FD kipinde tek `DATA` çerçevesi dolu yuvaların hepsini taşır (k ≤ 15); FD uzunluk yuvarlamasından gelen dolgu değerlerini host, yapılandırdığı yuva sayısına bakarak atar. Klasik kipte her yuva ayrı çerçevedir (k = 1, `first_slot` = yuva no).
 - `t_100us`: kartın 100 µs çözünürlüklü, taşan zaman damgası. `seq` her örnekleme anında 1 artar (kayıp tespiti).
 - Host `START`'ı saniyede bir tekrarlar; kart 2 s `START` görmezse akışı kendiliğinden keser.
 - En küçük periyot modele bağlıdır (katalog `stream.minPeriodUs`); kart desteklemediği periyodu en yakın desteklenene yuvarlar.
@@ -217,7 +220,7 @@ status: 0 OK · 1 BUSY · 2 BAD_OFFSET · 3 BAD_CRC · 4 BAD_IMAGE · 5 FLASH_ER
 ```
 
 - Kart `BEGIN` sonrası (silme sürerken `BUSY`, bitince `OK`), her `window` DATA çerçevesinde bir (varsayılan 16), sıra bozulunca (`BAD_OFFSET` + beklenen `next_offset`) ve `END` sonrası `ACK` yollar.
-- Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Boyutu aşan dolgu baytları yok sayılır.
+- Host `BAD_OFFSET` alınca `next_offset`'ten devam eder. Yalnızca son `DATA` parçası kısa olabilir; `size`'ı aşan dolgu baytları yok sayılır.
 - Uygulama kipindeki kart FW_REQ'e `WRONG_STATE` döner.
 
 ### 9.1 `.cyfw` dosyası

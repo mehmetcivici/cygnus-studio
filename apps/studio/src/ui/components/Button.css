@@ -1,0 +1,109 @@
+.cy-btn {
+  --btn-h: var(--cy-h-md);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--btn-h);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--cy-r-md);
+  font-size: var(--cy-fs-md);
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background var(--cy-dur-fast) var(--cy-ease),
+    border-color var(--cy-dur-fast) var(--cy-ease),
+    color var(--cy-dur-fast) var(--cy-ease),
+    box-shadow var(--cy-dur-fast) var(--cy-ease),
+    transform var(--cy-dur-fast) var(--cy-ease);
+}
+.cy-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.cy-btn:focus-visible {
+  border-radius: var(--cy-r-md);
+}
+.cy-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.cy-btn.is-loading {
+  opacity: 0.85;
+  cursor: progress;
+}
+.cy-btn--sm {
+  --btn-h: var(--cy-h-sm);
+  padding: 0 10px;
+  font-size: var(--cy-fs-sm);
+  gap: 5px;
+  border-radius: var(--cy-r-sm);
+}
+.cy-btn--lg {
+  --btn-h: var(--cy-h-lg);
+  padding: 0 18px;
+  font-size: var(--cy-fs-lg);
+  gap: 8px;
+}
+.cy-btn--block {
+  display: flex;
+  width: 100%;
+}
+.cy-btn__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cy-btn--primary {
+  background: var(--cy-accent);
+  color: var(--cy-text-on-accent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.cy-btn--primary:hover:not(:disabled) {
+  background: var(--cy-accent-hover);
+}
+
+.cy-btn--secondary {
+  background: var(--cy-panel-2);
+  border-color: var(--cy-line);
+  color: var(--cy-text);
+}
+.cy-btn--secondary:hover:not(:disabled) {
+  background: var(--cy-panel-3);
+  border-color: var(--cy-line-strong);
+}
+
+.cy-btn--ghost {
+  background: transparent;
+  color: var(--cy-text-2);
+}
+.cy-btn--ghost:hover:not(:disabled) {
+  background: var(--cy-hover);
+  color: var(--cy-text);
+}
+
+.cy-btn--danger {
+  background: var(--cy-danger-soft);
+  border-color: color-mix(in srgb, var(--cy-danger) 45%, transparent);
+  color: var(--cy-danger);
+}
+.cy-btn--danger:hover:not(:disabled) {
+  background: var(--cy-danger);
+  border-color: var(--cy-danger);
+  color: #fff;
+}
+
+/* Icon-only */
+.cy-btn--icon {
+  width: var(--btn-h);
+  padding: 0;
+}
+.cy-btn--icon.is-active {
+  background: var(--cy-accent-soft);
+  color: var(--cy-accent);
+  border-color: var(--cy-accent-line);
+}

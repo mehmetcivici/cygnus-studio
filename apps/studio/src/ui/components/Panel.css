@@ -1,0 +1,125 @@
+.cy-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--cy-panel);
+  border: 1px solid var(--cy-line);
+  border-radius: var(--cy-r-lg);
+  box-shadow: var(--cy-shadow-1);
+}
+.cy-panel--fill {
+  min-height: 0;
+  height: 100%;
+}
+.cy-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px 6px 16px;
+  border-bottom: 1px solid var(--cy-line-soft);
+}
+.cy-panel__icon {
+  flex: none;
+  color: var(--cy-accent);
+}
+.cy-panel__titles {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.cy-panel__title {
+  font-size: var(--cy-fs-md);
+  font-weight: 700;
+  color: var(--cy-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cy-panel__subtitle {
+  font-size: var(--cy-fs-sm);
+  color: var(--cy-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cy-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.cy-panel__body {
+  min-width: 0;
+}
+.cy-panel--fill .cy-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.cy-panel__body--sm {
+  padding: 10px;
+}
+.cy-panel__body--md {
+  padding: 16px;
+}
+.cy-panel__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--cy-line-soft);
+  background: color-mix(in srgb, var(--cy-panel-2) 50%, transparent);
+  border-radius: 0 0 var(--cy-r-lg) var(--cy-r-lg);
+}
+
+.cy-card {
+  position: relative;
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--cy-panel-2);
+  border: 1px solid var(--cy-line);
+  border-radius: var(--cy-r-md);
+  transition:
+    background var(--cy-dur-fast),
+    border-color var(--cy-dur-fast);
+}
+.cy-card.is-interactive {
+  cursor: pointer;
+}
+.cy-card.is-interactive:hover {
+  border-color: var(--cy-line-strong);
+  background: var(--cy-panel-3);
+}
+.cy-card.is-selected {
+  background: var(--cy-selected);
+  border-color: var(--cy-accent-line);
+}
+.cy-card[class*='cy-card--']::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--card-tone);
+}
+.cy-card--accent {
+  --card-tone: var(--cy-accent);
+}
+.cy-card--ok {
+  --card-tone: var(--cy-ok);
+}
+.cy-card--warn {
+  --card-tone: var(--cy-warn);
+}
+.cy-card--caution {
+  --card-tone: var(--cy-caution);
+}
+.cy-card--danger {
+  --card-tone: var(--cy-danger);
+}
