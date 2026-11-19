@@ -20,9 +20,9 @@ Sunum takvimindeki karşılığı: bu çalışma **Alfa** hedefini (Şub–Nis 2
 | Q1 | Bağımsız inceleme (4 ajan, 86 bulgu, 5 kritik) | Tamam (raporlar oturumda: protokol, host-sim, uygulama, tasarim) |
 | Q2 | Düzeltme turu | Tamam (6 ajan, dizin bazında) |
 | Q3 | Uzlaştırma ve bağımsız doğrulama | Tamam: bulguların yeniden üretimi, emniyet turu, kullanıcı yürüyüşü, çevrimiçi demo (sandbox) — ayrıntı oturumdaki `review/dogrulama.md` |
-| D1 | Canlı demo yayını, GitHub'a gönderim | **Yapılmadı** (repo bekleniyor); tek dosyalı demo `npm run build:demo` korumalı iframe'de doğrulandı |
+| D1 | Canlı demo yayını, GitHub'a gönderim | Demo yayınlandı (claude.ai artifact, korumalı çerçevede doğrulandı) · GitHub'a gönderim **bekliyor** (boş `cygnus-studio` reposu gerekli) |
 
-Son doğrulama (2026-11-19): `npm run typecheck` temiz · 964 TypeScript testi · C kütüphanesi 47 test + fuzz (200 000 çerçeve) · `cygnus-link` 11 + kabuk 3 Rust testi, `cargo clippy -D warnings` temiz · arayüz ve demo derlemesi hatasız.
+Son doğrulama (2026-11-19): `npm run typecheck` temiz · 972 TypeScript testi · C kütüphanesi 48 test + fuzz (200 000 çerçeve) · `cygnus-link` 11 + kabuk 3 Rust testi, `cargo clippy -D warnings` temiz · arayüz ve demo derlemesi hatasız.
 
 ## Açık işler
 
