@@ -301,6 +301,7 @@ struct cycan_node {
     uint32_t enum_due;
 
     uint16_t ctrl_armed; /* bit per CTRL index: neutral seen since the last forced neutral */
+    uint16_t ctrl_driving; /* bit per CTRL index: its last valid command was a drive command */
     bool ctrl_watch;
     uint32_t ctrl_last;
 

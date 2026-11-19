@@ -196,7 +196,7 @@ Ortak parametreler:
 
 ## 7. Kontrol çerçeveleri (CTRL)
 
-Katalogdaki `controls` tanımlar. CTRL yalnızca tek karta adreslenir; yayın (`NUM = 0` veya `DEVTYPE = 0`) CTRL çerçeveleri yok sayılır. Ortak kural: eyleyici, `ctrl.timeout_ms` içinde yeni CTRL çerçevesi almazsa nötr olur ve `CTRL_TIMEOUT` uyarısı verir. Standart biçim (ESC, sızdırmaz servo):
+Katalogdaki `controls` tanımlar. CTRL yalnızca tek karta adreslenir; yayın (`NUM = 0` veya `DEVTYPE = 0`) CTRL çerçeveleri yok sayılır. Ortak kural: eyleyici, `ctrl.timeout_ms` içinde yeni CTRL çerçevesi almazsa nötr olur ve `CTRL_TIMEOUT` uyarısı verir. `CTRL_TIMEOUT` uyarısı yalnız kart sürerken (bir indeksin son geçerli CTRL'si nötr değilken) komut kesilirse verilir; son komut nötrse veya kart hiç sürülmemişse akışın durması normaldir ve uyarı üretmez; uyarı yeni bir geçerli CTRL ya da `CLEAR_FAULTS` ile kalkar. Standart biçim (ESC, sızdırmaz servo):
 
 ```
 CTRL/0 SET: [mode u8] [flags u8] [0 0] [value f32]

@@ -868,6 +868,42 @@ void test_node_ctrl_timeout(void)
     CHECK(!app_log.driving);
 }
 
+/* PROTOCOL 7: the stream stopping after the neutral command is a normal end; only a loss
+ * while driving warns. CLEAR_FAULTS removes the warning. */
+void test_node_ctrl_timeout_when_neutral(void)
+{
+    cycan_heartbeat_t hb;
+    uint16_t warn;
+    setup(1);
+    /* Never driven: neutral commands only, then silence. */
+    send_neutral();
+    run_ms(&node, &now, 400);
+    CHECK_EQ(app_log.neutral_calls, 1);
+    CHECK_EQ(app_log.neutral_reason, CYCAN_NEUTRAL_CTRL_TIMEOUT);
+    cycan_fault_get(&node, NULL, NULL, &warn);
+    CHECK_EQ(warn, 0);
+
+    /* A normal drive: drive, end with the neutral command, stop sending. */
+    drive();
+    run_ms(&node, &now, 100);
+    send_neutral();
+    run_ms(&node, &now, 1000);
+    CHECK_EQ(app_log.neutral_calls, 2);
+    cycan_fault_get(&node, NULL, NULL, &warn);
+    CHECK_EQ(warn, 0);
+    CHECK(last_heartbeat(&hb) && !hb.warning && !hb.enabled);
+
+    /* Commands lost while driving: the warning, until CLEAR_FAULTS. */
+    drive();
+    run_ms(&node, &now, 400);
+    CHECK_EQ(app_log.neutral_calls, 3);
+    cycan_fault_get(&node, NULL, NULL, &warn);
+    CHECK_EQ(warn, 1u << CYCAN_FAULT_CTRL_TIMEOUT);
+    CHECK_EQ(command(CYCAN_CMD_CLEAR_FAULTS, 0, NULL), CYCAN_CMDST_OK);
+    cycan_fault_get(&node, NULL, NULL, &warn);
+    CHECK_EQ(warn, 0);
+}
+
 void test_node_neutral_first(void)
 {
     cycan_frame_t f;

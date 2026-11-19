@@ -28,7 +28,7 @@ import { defaultSignal, signalDuration, signalExtent, type SignalConfig } from '
 import { addRun, nextRunNumber, setActiveSet, setLoopConfig, storeGainSet, tunerSection } from './project';
 import { makeRun } from './runs';
 import { baseline, popHistory, pushHistory, sameGains, setBaseline, setUi, useLoopGains, useParamValues, useTunerUi } from './state';
-import { loopId, type GainSetId, type GainSets, type Gains, type LoopConfig, type TunerRun } from './types';
+import { forModel, loopId, type GainSetId, type GainSets, type Gains, type LoopConfig, type TunerRun } from './types';
 import { tTuner } from './messages';
 
 const DRIVER_ENV = {
@@ -222,7 +222,7 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
   // ---- persisted per-loop settings -----------------------------------------------------------
   const section = tunerSection.use();
   const measuredNow = driver?.value(ctx.idx.measured);
-  const stored = section.configs[id];
+  const stored = forModel(section.configs[id], def.key);
   const config = useMemo<LoopConfig>(() => {
     const base = defaultConfig(ctx, Number.isFinite(measuredNow) ? (measuredNow ?? 0) : 0);
     return stored ? { ...base, ...stored, signal: { ...base.signal, ...stored.signal }, limits: { ...base.limits, ...stored.limits } } : base;
@@ -235,17 +235,17 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
     if (stored || !driver || !ctx.integrating) return;
     const h = window.setTimeout(() => {
       const m = driver.value(ctx.idx.measured);
-      if (Number.isFinite(m) && !tunerSection.get().configs[id]) setLoopConfig(view.uid48, loop.key, defaultConfig(ctx, m));
+      if (Number.isFinite(m) && !forModel(tunerSection.get().configs[id], def.key)) setLoopConfig(view.uid48, loop.key, def.key, defaultConfig(ctx, m));
     }, 400);
     return () => window.clearTimeout(h);
   }, [stored, driver, ctx, id, view.uid48, loop.key]);
-  const setConfig = useCallback((patch: Partial<LoopConfig>) => setLoopConfig(view.uid48, loop.key, { ...config, ...patch }), [config, view.uid48, loop.key]);
+  const setConfig = useCallback((patch: Partial<LoopConfig>) => setLoopConfig(view.uid48, loop.key, def.key, { ...config, ...patch }), [config, view.uid48, def.key, loop.key]);
   const setSignal = useCallback((patch: Partial<SignalConfig>) => setConfig({ signal: { ...config.signal, ...patch } }), [config, setConfig]);
   const setLimits = useCallback((patch: Partial<TestLimits>) => setConfig({ limits: { ...config.limits, ...patch } }), [config, setConfig]);
   const integrating = config.integrating ?? ctx.integrating;
   const ctxEff = useMemo(() => (integrating === ctx.integrating ? ctx : { ...ctx, integrating }), [ctx, integrating]);
-  const runs = useMemo(() => section.runs.filter((r) => r.uid48 === view.uid48 && r.loopKey === loop.key), [section.runs, view.uid48, loop.key]);
-  const sets: GainSets = section.sets[id] ?? { A: null, B: null, active: 'A' };
+  const runs = useMemo(() => section.runs.filter((r) => r.uid48 === view.uid48 && r.modelKey === def.key && r.loopKey === loop.key), [section.runs, view.uid48, def.key, loop.key]);
+  const sets: GainSets = forModel(section.sets[id], def.key) ?? { A: null, B: null, active: 'A' };
 
   // ---- gains --------------------------------------------------------------------------------
   const gains = useLoopGains(view.uid48, loop.gains);
@@ -261,7 +261,7 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
   useEffect(() => {
     if (!gainsLoaded) return;
     const cur = sets[sets.active];
-    if (!cur || !sameGains(cur, gains)) storeGainSet(view.uid48, loop.key, sets.active, gains);
+    if (!cur || !sameGains(cur, gains)) storeGainSet(view.uid48, loop.key, def.key, sets.active, gains);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gains, gainsLoaded]);
 
@@ -297,7 +297,7 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
       }
       setUi({ busy: { kind, startedAt: performance.now(), duration } });
       const gainsAt = { ...gainsRef.current };
-      const set = tunerSection.get().sets[id]?.active ?? 'A';
+      const set = forModel(tunerSection.get().sets[id], def.key)?.active ?? 'A';
       try {
         const cap = await d.runTest(program, config.limits);
         if (cap.t.length < 10) return null;
@@ -361,16 +361,16 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
 
   const switchSet = useCallback(
     async (set: GainSetId) => {
-      const cur = tunerSection.get().sets[id] ?? { A: null, B: null, active: 'A' as GainSetId };
+      const cur = forModel(tunerSection.get().sets[id], def.key) ?? { A: null, B: null, active: 'A' as GainSetId };
       if (cur.active === set) return;
       // Leaving a set stores the board's gains into it; the other set (if any) is written.
-      storeGainSet(view.uid48, loop.key, cur.active, gainsRef.current);
+      storeGainSet(view.uid48, loop.key, def.key, cur.active, gainsRef.current);
       const target = cur[set];
-      setActiveSet(view.uid48, loop.key, set);
+      setActiveSet(view.uid48, loop.key, def.key, set);
       if (target) await write(target, true);
-      else storeGainSet(view.uid48, loop.key, set, gainsRef.current);
+      else storeGainSet(view.uid48, loop.key, def.key, set, gainsRef.current);
     },
-    [id, view.uid48, loop.key, write],
+    [id, view.uid48, def.key, loop.key, write],
   );
 
   const runAB = useCallback(async () => {
@@ -480,7 +480,7 @@ export function useTunerController(view: DeviceView, loopKey: string): TunerApi 
       toast.error(describeError(e, lang));
     }
   }, [handle, id, lang]);
-  const storeInSet = useCallback((set: GainSetId, g: Gains) => storeGainSet(view.uid48, loop.key, set, { ...gainsRef.current, ...g }), [view.uid48, loop.key]);
+  const storeInSet = useCallback((set: GainSetId, g: Gains) => storeGainSet(view.uid48, loop.key, def.key, set, { ...gainsRef.current, ...g }), [view.uid48, def.key, loop.key]);
 
   return {
     view,

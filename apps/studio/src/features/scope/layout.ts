@@ -8,6 +8,11 @@ export interface ScopeSignalCfg {
   id: string;
   uid48: string;
   key: string;
+  /**
+   * Catalog model of the card the signal was picked on. A uid48 alone may match another card
+   * (a different simulator scenario, a re-flashed board); absent in older project files.
+   */
+  model?: number;
   /** Theme token (`chart-3`) or CSS color. */
   color: string;
   axis: Axis;
@@ -39,6 +44,7 @@ function isCfg(v: unknown): v is ScopeSignalCfg {
     typeof o.id === 'string' &&
     typeof o.uid48 === 'string' &&
     typeof o.key === 'string' &&
+    (o.model === undefined || typeof o.model === 'number') &&
     typeof o.color === 'string' &&
     (o.axis === 'left' || o.axis === 'right') &&
     typeof o.visible === 'boolean' &&
@@ -82,7 +88,7 @@ function nextColor(signals: readonly ScopeSignalCfg[]): string {
   return CHART_COLORS.find((c) => !used.has(c)) ?? CHART_COLORS[signals.length % CHART_COLORS.length] ?? 'chart-1';
 }
 
-export function addSignal(layout: ScopeLayout, uid48: string, key: string, unit: string, unitOf: UnitOf, pane?: string): ScopeLayout {
+export function addSignal(layout: ScopeLayout, uid48: string, key: string, unit: string, unitOf: UnitOf, pane?: string, model?: number): ScopeLayout {
   const id = signalId(uid48, key);
   if (layout.signals.some((s) => s.id === id) || layout.signals.length >= MAX_SIGNALS) return layout;
   const target = pane && layout.panes.includes(pane) ? pane : (layout.panes[0] ?? 'p1');
@@ -91,6 +97,7 @@ export function addSignal(layout: ScopeLayout, uid48: string, key: string, unit:
     id,
     uid48,
     key,
+    ...(model !== undefined ? { model } : {}),
     color: nextColor(layout.signals),
     axis: autoAxis(siblings, unit, unitOf),
     visible: true,
@@ -150,7 +157,7 @@ export interface SignalSpec {
 }
 
 /** One pane per distinct unit (at most `MAX_PANES`), signals in the order given. */
-export function groupedLayout(uid48: string, specs: readonly SignalSpec[], base: ScopeLayout = defaultLayout()): ScopeLayout {
+export function groupedLayout(uid48: string, specs: readonly SignalSpec[], base: ScopeLayout = defaultLayout(), model?: number): ScopeLayout {
   const units: string[] = [];
   for (const s of specs) if (!units.includes(s.unit) && units.length < MAX_PANES) units.push(s.unit);
   let layout: ScopeLayout = { ...base, panes: units.map((_, i) => `p${i + 1}`), signals: [] };
@@ -158,7 +165,36 @@ export function groupedLayout(uid48: string, specs: readonly SignalSpec[], base:
   const unitOf = (c: ScopeSignalCfg): string => specs.find((s) => s.key === c.key)?.unit ?? '';
   for (const s of specs) {
     const idx = Math.min(Math.max(0, units.indexOf(s.unit)), layout.panes.length - 1);
-    layout = addSignal(layout, uid48, s.key, s.unit, unitOf, layout.panes[idx]);
+    layout = addSignal(layout, uid48, s.key, s.unit, unitOf, layout.panes[idx], model);
   }
   return layout;
+}
+
+/** What is known about the card a uid48 points at; undefined while it is absent or unidentified. */
+export interface CardIdentity {
+  model: number;
+  signals: ReadonlySet<string>;
+}
+
+/**
+ * Checks a stored layout against the cards on the bus: a signal whose uid48 now belongs to a
+ * card of another model, or to a card without that signal key, is dropped (it would otherwise
+ * show a raw key bound to the wrong card). Signals of absent cards stay. Kept signals from older
+ * files without a model get the card's model, so a later mismatch is caught.
+ */
+export function reconcileLayout(layout: ScopeLayout, cardOf: (uid48: string) => CardIdentity | undefined): { layout: ScopeLayout; dropped: ScopeSignalCfg[] } {
+  const dropped: ScopeSignalCfg[] = [];
+  let stamped = false;
+  const signals: ScopeSignalCfg[] = [];
+  for (const s of layout.signals) {
+    const card = cardOf(s.uid48);
+    if (!card) signals.push(s);
+    else if ((s.model !== undefined && s.model !== card.model) || !card.signals.has(s.key)) dropped.push(s);
+    else if (s.model === undefined) {
+      signals.push({ ...s, model: card.model });
+      stamped = true;
+    } else signals.push(s);
+  }
+  if (dropped.length === 0 && !stamped) return { layout, dropped };
+  return { layout: { ...layout, signals }, dropped };
 }

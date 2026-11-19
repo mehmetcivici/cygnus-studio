@@ -7,7 +7,7 @@ import { Badge, Button, Panel, toast } from "../../ui";
 import { ALIGNED_DEG, rotToSignedDeg, zeroEncoders } from "./zero";
 import { tVehicle } from "./messages";
 
-type Bound = { slotId: string; label: string; uid48: string };
+type Bound = { slotId: string; label: string; uid48: string; model: string };
 
 /** Steer-encoder slots of the template that are bound to a board. */
 export function steerEncoders(
@@ -19,7 +19,7 @@ export function steerEncoders(
   for (const s of tpl.slots) {
     if (s.role !== "steerEncoder") continue;
     const b = bindings[s.id];
-    if (b?.kind === "device") out.push({ slotId: s.id, label: tl(s.label), uid48: b.uid48 });
+    if (b?.kind === "device") out.push({ slotId: s.id, label: tl(s.label), uid48: b.uid48, model: b.model });
   }
   return out;
 }
@@ -80,7 +80,7 @@ export function EncoderZero({
     if (!bus) return;
     setBusy(true);
     try {
-      const r = await zeroEncoders(which.map((i) => ({ slotId: i.slotId, device: bus.deviceByUid(i.uid48) })));
+      const r = await zeroEncoders(which.map((i) => ({ slotId: i.slotId, device: bus.deviceByUid(i.uid48), model: i.model })));
       if (r.failed.length === 0) toast.success(tVehicle("zero.done", { n: r.ok.length }));
       else
         toast.error(tVehicle("zero.failed", { n: r.failed.length }), {

@@ -68,6 +68,7 @@ static bool fail_moving_cmd(cycan_node_t *n)
 static void neutral(cycan_node_t *n, cycan_neutral_reason_t why)
 {
     n->ctrl_armed = 0;
+    n->ctrl_driving = 0;
     n->ctrl_watch = false;
     n->enabled = false;
     (void)fail_moving_cmd(n);
@@ -550,6 +551,7 @@ static void on_command(cycan_node_t *n, const cycan_command_t *m, bool broadcast
         /* PARAM_CRC is latched by the library, not a live condition: clearing faults is the
          * operator's acknowledgement that the defaults are in use. */
         cycan_fault_clear(n, CYCAN_FAULT_PARAM_CRC, CYCAN_FAULT_ACTIVE);
+        cycan_fault_clear(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);
         n->fault_sticky = n->fault_active;
         st = CYCAN_CMDST_OK;
         break;
@@ -654,8 +656,11 @@ static void on_ctrl(cycan_node_t *n, uint32_t id, uint8_t index, const uint8_t *
     if (!cycan_ctrl_allowed(n)) return; /* the callback raised a fault */
     if (r == CYCAN_CTRL_NEUTRAL) {
         n->ctrl_armed |= bit;
+        n->ctrl_driving &= (uint16_t)~bit;
         /* PROTOCOL 4.5: the host's way to cancel a moving command. */
         if (fail_moving_cmd(n)) app_neutral(n, CYCAN_NEUTRAL_ABORT);
+    } else {
+        n->ctrl_driving |= bit;
     }
     n->ctrl_watch = true;
     n->ctrl_last = n->now;
@@ -1011,7 +1016,8 @@ void cycan_poll(cycan_node_t *n, uint32_t now_us)
     if (n->ctrl_watch) {
         uint32_t timeout = MS(param_u32(n, n->idx_ctrl_timeout, CYCAN_CTRL_TIMEOUT_DEFAULT_MS));
         if ((n->now - n->ctrl_last) > timeout) {
-            cycan_fault_set(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);
+            /* PROTOCOL 7: a command stream that stops after the neutral command is a normal end. */
+            if (n->ctrl_driving != 0u) cycan_fault_set(n, CYCAN_FAULT_CTRL_TIMEOUT, CYCAN_FAULT_WARN);
             neutral(n, CYCAN_NEUTRAL_CTRL_TIMEOUT);
         }
     }

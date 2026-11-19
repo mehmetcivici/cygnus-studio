@@ -321,6 +321,8 @@ describe('host ↔ C library (cycan-bridge)', () => {
     loop.stop();
     await r.runFor(600);
     expect(d.flags.enabled).toBe(false);
+    // The loop ended with the neutral command: silence afterwards is not a timeout (PROTOCOL §7).
+    expect(d.flags.warning).toBe(false);
     d.control.set('duty', 0.2);
     await r.runFor(800);
     expect(d.flags.enabled).toBe(false);
@@ -444,6 +446,12 @@ function script(): Step[] {
   add('neutral + drive again', neutral, drive(0.3));
   at += 400; // CTRL timeout
   add('fault req after timeout', encodeFaultReq(ESC));
+  add('drive, end with neutral', neutral, drive(0.3), neutral);
+  at += 400; // silence after the neutral command: no CTRL_TIMEOUT warning
+  add('fault req after a normal end', encodeFaultReq(ESC));
+  add('neutral + drive, then lost', neutral, drive(0.3));
+  at += 400;
+  add('fault req after the loss', encodeFaultReq(ESC));
   add('estop', encodeEstop(BROADCAST_ALL));
   add('reboot in estop', cmd(Command.REBOOT));
   add('clear estop in the same turn', encodeEstop(BROADCAST_ALL), cmd(Command.CLEAR_ESTOP));

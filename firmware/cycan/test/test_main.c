@@ -23,6 +23,7 @@ int g_failures;
     X(test_node_status_periods)         \
     X(test_node_stream_fd_and_classic)  \
     X(test_node_ctrl_timeout)           \
+    X(test_node_ctrl_timeout_when_neutral) \
     X(test_node_neutral_first)          \
     X(test_node_broadcast_ctrl)         \
     X(test_node_estop)                  \

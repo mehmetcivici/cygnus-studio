@@ -38,6 +38,7 @@ export const tScope = registerMessages('scope', {
     issueNoSlots: '{name}: akış yuvası yetmedi ({count} sinyal; kartta 15 yuva var ve başka bir akış kullanıyor olabilir). Bu kart normal hızda çiziliyor.',
     issueUnsupported: '{name} akışı desteklemiyor; normal hızda çiziliyor.',
     issueFailed: '{name}: akış açılamadı ({error}); normal hızda çiziliyor.',
+    droppedSignals: 'Kayıtlı düzendeki {count} sinyal bu hattaki kartlarla uyuşmadığı için çıkarıldı ({keys}).',
 
     paneN: 'Bölme {n}',
     addPane: 'Bölme ekle',
@@ -135,6 +136,7 @@ export const tScope = registerMessages('scope', {
     issueNoSlots: '{name}: not enough stream slots ({count} signals; a board has 15 and another stream may be using some). This board is plotted at normal rate.',
     issueUnsupported: '{name} does not support streaming; plotted at normal rate.',
     issueFailed: '{name}: the stream could not be opened ({error}); plotted at normal rate.',
+    droppedSignals: '{count} signal(s) of the saved layout did not match the boards on this bus and were removed ({keys}).',
 
     paneN: 'Pane {n}',
     addPane: 'Add pane',

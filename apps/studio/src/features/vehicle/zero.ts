@@ -1,6 +1,6 @@
 import type { DeviceHandle } from '@cygnus/protocol';
 
-export type ZeroDevice = Pick<DeviceHandle, 'command' | 'save'>;
+export type ZeroDevice = Pick<DeviceHandle, 'command' | 'save' | 'def'>;
 
 export interface ZeroResult {
   ok: string[];
@@ -11,11 +11,16 @@ export interface ZeroResult {
  * "Zero here" on each steer encoder, then save so the offset survives a power cycle. Boards are
  * done one after another: a module that fails does not stop the others, and the caller lists it.
  */
-export async function zeroEncoders(targets: ReadonlyArray<{ slotId: string; device: ZeroDevice | undefined }>, onProgress?: (slotId: string) => void): Promise<ZeroResult> {
+export async function zeroEncoders(
+  targets: ReadonlyArray<{ slotId: string; device: ZeroDevice | undefined; model: string }>,
+  onProgress?: (slotId: string) => void,
+): Promise<ZeroResult> {
   const out: ZeroResult = { ok: [], failed: [] };
   for (const t of targets) {
     try {
       if (!t.device) throw new Error('offline');
+      // The uid48 of the binding may now belong to a card of another model: never command it.
+      if (t.device.def?.key !== t.model) throw new Error(`model ${t.device.def?.key ?? '?'} ≠ ${t.model}`);
       await t.device.command('zero_here');
       await t.device.save();
       out.ok.push(t.slotId);

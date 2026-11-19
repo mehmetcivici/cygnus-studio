@@ -420,6 +420,30 @@ describe('commands, faults, estop, timeout', () => {
     expect(host.last('heartbeat', ESC)!.warning).toBe(true);
   });
 
+  it('no CTRL_TIMEOUT warning when commands stop after the neutral command; CLEAR_FAULTS clears it', () => {
+    const { host, esc } = escSim();
+    const warn = () => host.ask(encodeFaultReq(ESC), 'faultRsp')[0]!.warn & (1 << FaultBit.CTRL_TIMEOUT);
+    host.send(encodeCtrlSet(ESC, { mode: 0, flags: 0, value: 0 }));
+    host.run(400);
+    expect(warn()).toBe(0); // never driven
+    host.arm(ESC);
+    host.send(encodeCtrlSet(ESC, { mode: EscMode.DUTY, flags: 0, value: 0.3 }));
+    host.run(50);
+    expect(esc.isEnabled()).toBe(true);
+    host.send(encodeCtrlSet(ESC, { mode: 0, flags: 0, value: 0 }));
+    host.run(1000);
+    expect(esc.isEnabled()).toBe(false);
+    expect(host.last('heartbeat', ESC)!.warning).toBe(false);
+    expect(warn()).toBe(0);
+    host.arm(ESC);
+    host.send(encodeCtrlSet(ESC, { mode: EscMode.DUTY, flags: 0, value: 0.3 }));
+    host.run(400);
+    expect(warn()).not.toBe(0); // lost while driving
+    host.send(encodeCommand(ESC, { cmd: Command.CLEAR_FAULTS, arg: 0 }));
+    host.run(3);
+    expect(warn()).toBe(0);
+  });
+
   it('the neutral command (mode 0, value 0) stops the motor and keeps the board fed', () => {
     const { host, esc } = escSim();
     host.arm(ESC);

@@ -12,6 +12,8 @@ export interface SimulationOptions {
   /** Fixed termination resistors on the bus besides switchable ones on boards (default 2). */
   baseTerminations?: number;
   label?: Text;
+  /** Scenario this simulation is built from; scenario boards derive their UIDs from it. */
+  scenarioId?: string;
 }
 
 /** A board that supplies other boards (PDH, regulator). */
@@ -64,6 +66,7 @@ export class Simulation implements SimContext {
 
   constructor(o: SimulationOptions = {}) {
     this.seed = o.seed ?? 1;
+    this.scenarioId = o.scenarioId ?? '';
     this.rng = new Prng(this.seed);
     this.bus = new SimBus(this.rng.fork(0xb05), { fd: o.fd ?? true });
     this.world = new World(this.rng.fork(0x3011d));

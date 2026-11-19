@@ -97,7 +97,8 @@ describe('host ↔ simulator: vehicle configuration', () => {
     await r.runFor(1500);
     // Stiction leaves a small band; the loop holds it near the target instead of where the shove left it.
     expect(Math.abs(enc.getSignal('position') - target)).toBeLessThan(0.02);
-    expect(Math.abs(enc.getSignal('position') - target)).toBeLessThanOrEqual(Math.abs(pushedTo - target) + 1e-9);
+    // One count of the 12-bit encoder: board timing phases follow the UIDs, so the last count may differ.
+    expect(Math.abs(enc.getSignal('position') - target)).toBeLessThanOrEqual(Math.abs(pushedTo - target) + 1 / 4096 + 1e-9);
     loop.stop();
   });
 

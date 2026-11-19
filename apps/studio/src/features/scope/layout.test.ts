@@ -6,6 +6,7 @@ import {
   defaultLayout,
   groupedLayout,
   isScopeLayout,
+  reconcileLayout,
   moveSignal,
   removePane,
   setAxis,
@@ -86,5 +87,39 @@ describe('isScopeLayout', () => {
     expect(isScopeLayout({ ...l, signals: [{ ...l.signals[0], pane: 'nope' }] })).toBe(false);
     expect(isScopeLayout(null)).toBe(false);
     expect(isScopeLayout({ ...l, windowS: 'x' })).toBe(false);
+  });
+});
+
+describe('saved layout vs. the cards on the bus', () => {
+  const esc = { model: 0x11, signals: new Set(['v1', 'a1']) };
+  const base = (): ReturnType<typeof defaultLayout> => {
+    let l = addSignal(defaultLayout(), 'u1', 'v1', 'V', unitOf, undefined, 0x11);
+    l = addSignal(l, 'u1', 'a1', 'A', unitOf, undefined, 0x11);
+    return addSignal(l, 'u2', 't1', '°C', unitOf);
+  };
+
+  it('keeps a layout whose cards match, and signals of absent cards', () => {
+    const l = base();
+    const r = reconcileLayout(l, (u) => (u === 'u1' ? esc : undefined));
+    expect(r.dropped).toEqual([]);
+    expect(r.layout).toBe(l);
+  });
+
+  it('drops signals whose uid48 now belongs to a card of another model or without that key', () => {
+    const other = { model: 0x30, signals: new Set(['v1', 't1']) };
+    const r = reconcileLayout(base(), (u) => (u === 'u1' ? other : u === 'u2' ? esc : undefined));
+    expect(r.dropped.map((s) => s.id).sort()).toEqual(['u1/a1', 'u1/v1', 'u2/t1']);
+    expect(r.layout.signals).toEqual([]);
+    expect(isScopeLayout(r.layout)).toBe(true);
+  });
+
+  it('binds signals of older files (no model) to the card they matched', () => {
+    const l = addSignal(defaultLayout(), 'u1', 'v1', 'V', unitOf);
+    expect(l.signals[0]?.model).toBeUndefined();
+    const r = reconcileLayout(l, () => esc);
+    expect(r.dropped).toEqual([]);
+    expect(r.layout.signals[0]?.model).toBe(0x11);
+    expect(isScopeLayout(r.layout)).toBe(true);
+    expect(isScopeLayout({ ...r.layout, signals: [{ ...r.layout.signals[0], model: 'x' }] })).toBe(false);
   });
 });

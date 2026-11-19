@@ -145,6 +145,21 @@ describe('scenarios', () => {
     expect(sim.slotPlacements['thr.h1']!.channel).toBeGreaterThan(0);
   });
 
+  it('board UIDs follow the scenario: unique across scenarios, stable per scenario and its factory-fresh variant', () => {
+    const uids = (id: string, assigned = true) => createScenario(id, { assigned }).nodes.map((n) => `${n.id}=${n.uid48}`);
+    const owner = new Map<number, string>();
+    for (const { id } of scenarios) {
+      for (const n of createScenario(id).nodes) {
+        expect(owner.get(n.uid48), `${id}/${n.id}`).toBeUndefined();
+        owner.set(n.uid48, `${id}/${n.id}`);
+      }
+      expect(uids(id)).toEqual(uids(id));
+    }
+    for (const id of ['vehicle.frc.swerve4', 'vehicle.underwater.rov6', 'bench.flywheel']) expect(uids(id, false)).toEqual(uids(id));
+    // A different seed changes the physics stream, not which boards are on the bench.
+    expect(createScenario('bench.arm', { seed: 99 }).nodes.map((n) => n.uid48)).toEqual(createScenario('bench.arm').nodes.map((n) => n.uid48));
+  });
+
   it('is deterministic: same seed, same frames', () => {
     const hash = (seed: number): number => {
       const sim = createScenario('vehicle.frc.swerve4', { seed });

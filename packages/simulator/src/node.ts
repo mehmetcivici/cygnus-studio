@@ -244,6 +244,8 @@ export abstract class SimNode implements BusEndpoint {
   private lastCtrlMs = 0;
   /** Bit per CTRL index: a neutral command was seen since the last neutral-forcing event. */
   private ctrlArmed = 0;
+  /** Bit per CTRL index: its last valid command was a drive command, not the neutral one. */
+  private ctrlDriving = 0;
   private inNeutral = false;
   /** Time ESTOP was last latched: a CLEAR_ESTOP in the same processing turn loses (PROTOCOL §4.7). */
   private estopAt = -1;
@@ -428,6 +430,7 @@ export abstract class SimNode implements BusEndpoint {
   /** Every neutral-forcing event: outputs neutral, watchdog off, every CTRL index disarmed. */
   private forceNeutral(): void {
     this.ctrlArmed = 0;
+    this.ctrlDriving = 0;
     this.ctrlSeen = false;
     this.failMovingCommand();
     if (this.inNeutral) return;
@@ -678,7 +681,8 @@ export abstract class SimNode implements BusEndpoint {
       this.faultSticky &= this.faultActive;
     }
     if (this.actuator && this.ctrlSeen && now - this.lastCtrlMs > this.p(this.pCtrlTimeout)) {
-      this.setWarn(FaultBit.CTRL_TIMEOUT, true);
+      // PROTOCOL §7: a command stream that stops after the neutral command is a normal end.
+      if (this.ctrlDriving !== 0) this.setWarn(FaultBit.CTRL_TIMEOUT, true);
       this.forceNeutral();
     }
     if (this.mode !== NodeMode.APP) return; // an action may have rebooted the board
@@ -749,8 +753,9 @@ export abstract class SimNode implements BusEndpoint {
     if (!this.ctrlAllowed) return; // applying it raised a fault
     if (r === CtrlResult.NEUTRAL) {
       this.ctrlArmed |= bit;
+      this.ctrlDriving &= ~bit;
       this.abortMovingCommand();
-    }
+    } else this.ctrlDriving |= bit;
     this.lastCtrlMs = this.now;
     this.ctrlSeen = true;
     if (this.faultWarn & (1 << FaultBit.CTRL_TIMEOUT)) this.setWarn(FaultBit.CTRL_TIMEOUT, false);
@@ -1023,6 +1028,7 @@ export abstract class SimNode implements BusEndpoint {
         // PARAM_CRC is a latched condition, not a live one: clearing it is the operator's
         // acknowledgement that the defaults are in use (same as the C library).
         this.setFault(FaultBit.PARAM_CRC, false);
+        this.setWarn(FaultBit.CTRL_TIMEOUT, false);
         this.faultSticky = this.faultActive;
         // Latched model faults released above drop out of `faultActive` at the next app step;
         // only what is still active then stays sticky.

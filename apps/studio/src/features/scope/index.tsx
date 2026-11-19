@@ -25,6 +25,7 @@ import {
   groupedLayout,
   moveSignal,
   patchSignal,
+  reconcileLayout,
   removePane,
   removeSignal,
   setAxis,
@@ -58,7 +59,7 @@ function recommendedFor(d: DeviceView, base: ScopeLayout): ScopeLayout | null {
     .map((k) => signalDef(d, k))
     .filter((s): s is SignalDef => !!s && !s.options && !s.bits)
     .map((s) => ({ key: s.key, unit: s.unit }));
-  return specs.length ? groupedLayout(d.uid48, specs, base) : null;
+  return specs.length ? groupedLayout(d.uid48, specs, base, d.model) : null;
 }
 
 export function ScopeScreen({ params }: FeatureProps) {
@@ -101,8 +102,26 @@ export function ScopeScreen({ params }: FeatureProps) {
   metaRef.current = metaOf;
   const unitOf = useCallback((c: ScopeSignalCfg): string => metaRef.current(c).unit, []);
 
-  // --- sources -------------------------------------------------------------------------
   const wantedKey = stored.signals.map((s) => s.id).join(',');
+
+  // --- saved layout vs. the cards on the bus --------------------------------------------
+  // A uid48 may now belong to another card (another simulator scenario, a re-flashed board):
+  // signals that card does not have are dropped instead of being shown as raw keys.
+  const identityKey = devices
+    .filter((d) => d.def)
+    .map((d) => `${d.uid48}:${d.model}`)
+    .join(',');
+  useEffect(() => {
+    if (session) return;
+    const cards = new Map(devices.filter((d) => d.def).map((d) => [d.uid48, { model: d.model, signals: new Set(d.def?.signals.map((x) => x.key)) }]));
+    const { layout: next, dropped } = reconcileLayout(scopeLayoutSection.get(), (u) => cards.get(u));
+    if (next === scopeLayoutSection.get()) return;
+    scopeLayoutSection.set(next);
+    if (dropped.length) toast.info(tScope('droppedSignals', { count: dropped.length, keys: dropped.map((x) => x.key).join(', ') }));
+    // `identityKey` stands in for the identified cards; `wantedKey` for a newly loaded layout.
+  }, [identityKey, wantedKey, session]);
+
+  // --- sources -------------------------------------------------------------------------
   const onlineKey = devices.filter((d) => d.online).map((d) => d.uid48).join(',');
   useEffect(() => {
     const wanted: WantedSignal[] = session ? [] : stored.signals.map((s) => ({ id: s.id, uid48: s.uid48, key: s.key }));
@@ -165,7 +184,8 @@ export function ScopeScreen({ params }: FeatureProps) {
         const unit = signalDef(byUid.get(r.uid48), r.key)?.unit ?? '';
         // Join the pane that already plots this unit so related traces share an axis.
         const sibling = l.signals.find((s) => metaOf(s).unit === unit && unit !== '');
-        l = addSignal(l, r.uid48, r.key, unit, unitOf, sibling?.pane);
+        const card = byUid.get(r.uid48);
+        l = addSignal(l, r.uid48, r.key, unit, unitOf, sibling?.pane, card?.def ? card.model : undefined);
       }
       return l;
     });

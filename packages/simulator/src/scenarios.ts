@@ -9,6 +9,7 @@ import { PdhLargeNode, PdhSmallNode, SocRegNode } from './devices/power';
 import { SealedServoNode } from './devices/sealed-servo';
 import { Servo16Node } from './devices/servo16';
 import type { SimNode, SimNodeOptions } from './node';
+import { Prng } from './prng';
 import { Simulation } from './simulation';
 import { HobbyServo, MOTORS, type MotorSpec, type PowerFeed, type Shaft, type Thruster } from './world';
 
@@ -40,7 +41,19 @@ export interface SlotPlacement {
 
 // ---------------------------------------------------------------------------------------
 
-/** Small helper that creates boards with seed-derived UIDs and consistent numbering. */
+/**
+ * UID of a scenario board from the scenario id and the board's role (its node id): the same
+ * scenario gives the same UIDs on every run (also its `assigned: false` variant), different
+ * scenarios give different ones, so a project's uid48-keyed records do not match the wrong board.
+ */
+export function scenarioUid96(scenarioId: string, nodeId: string): Uint8Array {
+  const key = `${scenarioId}/${nodeId}`;
+  let h = 0x811c9dc5;
+  for (let k = 0; k < key.length; k++) h = Math.imul(h ^ key.charCodeAt(k), 0x01000193) >>> 0;
+  return new Prng(h).bytes(12);
+}
+
+/** Small helper that creates boards with scenario-derived UIDs and consistent numbering. */
 export class ScenarioBuilder {
   readonly sim: Simulation;
   readonly assigned: boolean;
@@ -51,7 +64,7 @@ export class ScenarioBuilder {
     this.assigned = assigned;
   }
 
-  /** Base options: random UID from the seed; number and name only when `assigned`. */
+  /** Base options: UID from the scenario and node id; number and name only when `assigned`. */
   opts(devType: number, o: { id: string; num?: number; name?: string; params?: Record<string, number>; feed?: PowerFeed | null }): SimNodeOptions {
     let num = NUM_UNASSIGNED;
     if (this.assigned) {
@@ -62,7 +75,7 @@ export class ScenarioBuilder {
       while (used.has(num) && num < 62) num++;
       used.add(num);
     }
-    const out: SimNodeOptions = { id: o.id, uid96: this.sim.rng.bytes(12), num };
+    const out: SimNodeOptions = { id: o.id, uid96: scenarioUid96(this.sim.scenarioId, o.id), num };
     if (this.assigned && o.name) out.name = fitName(o.name);
     if (this.assigned && o.params) out.params = o.params;
     // A classic-only bus (roboRIO, MCP2515) needs boards in classic mode, or their FD stream
@@ -98,7 +111,7 @@ export class ScenarioBuilder {
   legacyEncoder(o: { id: string; shaft: Shaft | null; num: number; version?: 0 | 2 | 3; mountRot?: number }): LegacyCyncoderNode {
     const mountRot = o.mountRot ?? this.sim.rng.next();
     return this.sim.addNode(
-      new LegacyCyncoderNode({ id: o.id, uid96: this.sim.rng.bytes(12), num: o.num, shaft: o.shaft, mountRot, ...(o.version !== undefined ? { version: o.version } : {}) }),
+      new LegacyCyncoderNode({ id: o.id, uid96: scenarioUid96(this.sim.scenarioId, o.id), num: o.num, shaft: o.shaft, mountRot, ...(o.version !== undefined ? { version: o.version } : {}) }),
     );
   }
 
@@ -145,7 +158,7 @@ function fitName(s: string): string {
 // Hand-made scenarios
 
 function benchFlywheel(o: ScenarioOptions): Simulation {
-  const sim = new Simulation({ seed: o.seed ?? 1, fd: o.fd ?? true, label: { tr: 'Volan tezgâhı', en: 'Flywheel bench' } });
+  const sim = new Simulation({ seed: o.seed ?? 1, fd: o.fd ?? true, scenarioId: 'bench.flywheel', label: { tr: 'Volan tezgâhı', en: 'Flywheel bench' } });
   const b = new ScenarioBuilder(sim, o.assigned ?? true);
   const fly = sim.world.addShaft({ id: 'flywheel', label: 'Volan / Flywheel', inertia: 0.004, viscous: 2e-4, coulomb: 0.03 });
   b.esc({ id: 'esc', model: Model.ESC_80A, motor: MOTORS.neo, shaft: fly, num: 1, name: 'Volan', params: { 'fb.source': 1 } });
@@ -154,7 +167,7 @@ function benchFlywheel(o: ScenarioOptions): Simulation {
 }
 
 function benchArm(o: ScenarioOptions): Simulation {
-  const sim = new Simulation({ seed: o.seed ?? 1, fd: o.fd ?? true, label: { tr: 'Kol eklemi tezgâhı', en: 'Arm joint bench' } });
+  const sim = new Simulation({ seed: o.seed ?? 1, fd: o.fd ?? true, scenarioId: 'bench.arm', label: { tr: 'Kol eklemi tezgâhı', en: 'Arm joint bench' } });
   const b = new ScenarioBuilder(sim, o.assigned ?? true);
   // 0.6 m arm with a 2 kg end mass: ~12 N·m when horizontal; it hangs straight down at 0.
   const arm = sim.world.addShaft({
@@ -182,7 +195,7 @@ function benchArm(o: ScenarioOptions): Simulation {
 }
 
 function factoryFresh(o: ScenarioOptions): Simulation {
-  const sim = new Simulation({ seed: o.seed ?? 7, fd: o.fd ?? true, label: { tr: 'Fabrika çıkışı kartlar', en: 'Factory-fresh boards' } });
+  const sim = new Simulation({ seed: o.seed ?? 7, fd: o.fd ?? true, scenarioId: 'factory.fresh', label: { tr: 'Fabrika çıkışı kartlar', en: 'Factory-fresh boards' } });
   const fresh = new ScenarioBuilder(sim, false);
   const set = new ScenarioBuilder(sim, true);
   const w = sim.world;
@@ -203,7 +216,7 @@ function factoryFresh(o: ScenarioOptions): Simulation {
 }
 
 function allDevices(o: ScenarioOptions): Simulation {
-  const sim = new Simulation({ seed: o.seed ?? 3, fd: o.fd ?? true, label: { tr: 'Tüm cihazlar', en: 'All devices' } });
+  const sim = new Simulation({ seed: o.seed ?? 3, fd: o.fd ?? true, scenarioId: 'all.devices', label: { tr: 'Tüm cihazlar', en: 'All devices' } });
   const b = new ScenarioBuilder(sim, o.assigned ?? true);
   const w = sim.world;
   const pdh = b.pdhLarge({ id: 'pdh_large', num: 1, name: 'Güç dağıtım' });
@@ -230,7 +243,7 @@ function allDevices(o: ScenarioOptions): Simulation {
 
 function legacyCyncoder(o: ScenarioOptions): Simulation {
   // FRC bus: classic CAN unless asked otherwise, as on a roboRIO.
-  const sim = new Simulation({ seed: o.seed ?? 5, fd: o.fd ?? false, label: { tr: 'Eski Cyncoder', en: 'Legacy Cyncoder' } });
+  const sim = new Simulation({ seed: o.seed ?? 5, fd: o.fd ?? false, scenarioId: 'legacy.cyncoder', label: { tr: 'Eski Cyncoder', en: 'Legacy Cyncoder' } });
   const b = new ScenarioBuilder(sim, o.assigned ?? true);
   const w = sim.world;
   const sh = (id: string, label: string): Shaft => w.addShaft({ id, label, inertia: 0.002, viscous: 1e-4, coulomb: 0.02 });
@@ -328,8 +341,7 @@ function acceptsChannel(s: VehicleSlot): boolean {
  * With `assigned: false` boards are factory-fresh, to try the vehicle setup wizard.
  */
 export function buildVehicleScenario(template: VehicleTemplate, o: ScenarioOptions = {}): Simulation {
-  const sim = new Simulation({ seed: o.seed ?? 11, fd: o.fd ?? true, label: template.name });
-  sim.scenarioId = `vehicle.${template.id}`;
+  const sim = new Simulation({ seed: o.seed ?? 11, fd: o.fd ?? true, label: template.name, scenarioId: VEHICLE_PREFIX + template.id });
   const assigned = o.assigned ?? true;
   const b = new ScenarioBuilder(sim, assigned);
   const w = sim.world;
@@ -647,7 +659,6 @@ export function createScenario(id: string, o: ScenarioOptions = {}): Simulation 
   let sim: Simulation;
   if (hand) {
     sim = hand.build(o);
-    sim.scenarioId = id;
   } else if (id.startsWith(VEHICLE_PREFIX)) {
     const t = vehicleTemplates.find((x) => x.id === id.slice(VEHICLE_PREFIX.length));
     if (!t) throw new Error(`unknown vehicle template in scenario ${id}`);

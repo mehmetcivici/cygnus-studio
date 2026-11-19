@@ -61,6 +61,8 @@ export interface GainSets {
   A: Gains | null;
   B: Gains | null;
   active: GainSetId;
+  /** Model the record belongs to: a uid48 alone may now name another card. Absent in older files. */
+  modelKey?: string;
 }
 
 export interface LoopConfig {
@@ -68,6 +70,8 @@ export interface LoopConfig {
   limits: TestLimits;
   /** User override of the process type. */
   integrating?: boolean;
+  /** Model the record belongs to (see GainSets.modelKey). */
+  modelKey?: string;
 }
 
 export interface TunerSection {
@@ -148,11 +152,11 @@ function isRun(v: unknown): v is TunerRun {
 }
 
 function isGainSets(v: unknown): v is GainSets {
-  return isRecord(v) && (v.A === null || isGains(v.A)) && (v.B === null || isGains(v.B)) && (v.active === 'A' || v.active === 'B');
+  return isRecord(v) && (v.A === null || isGains(v.A)) && (v.B === null || isGains(v.B)) && (v.active === 'A' || v.active === 'B') && (v.modelKey === undefined || isPlain(v.modelKey));
 }
 
 function isLoopConfig(v: unknown): v is LoopConfig {
-  return isRecord(v) && isSignal(v.signal) && isLimits(v.limits) && (v.integrating === undefined || typeof v.integrating === 'boolean');
+  return isRecord(v) && isSignal(v.signal) && isLimits(v.limits) && (v.integrating === undefined || typeof v.integrating === 'boolean') && (v.modelKey === undefined || isPlain(v.modelKey));
 }
 
 /**
@@ -175,3 +179,12 @@ export function isTunerSection(v: unknown): v is TunerSection {
 }
 
 export const loopId = (uid48: string, loopKey: string): string => `${uid48}:${loopKey}`;
+
+/**
+ * A per-loop record only when it was made on this model: the uid48 in its key may now belong
+ * to another card (another simulator scenario, a re-flashed board). Older records without a
+ * model are taken as they are.
+ */
+export function forModel<T extends { modelKey?: string }>(rec: T | undefined, modelKey: string): T | undefined {
+  return rec && (rec.modelKey === undefined || rec.modelKey === modelKey) ? rec : undefined;
+}

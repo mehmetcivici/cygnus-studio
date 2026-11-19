@@ -391,7 +391,7 @@ export function SlotInspector({
           <Detect slot={slot} bindings={bindings} />
         </Section>
       )}
-      {actuator && b && b.kind !== "external" && (
+      {actuator && b && b.kind !== "external" && status !== "incompatible" && (
         <Section title={tVehicle("test.title")}>
           <MotorTest
             slot={slot}

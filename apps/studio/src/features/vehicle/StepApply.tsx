@@ -172,6 +172,7 @@ export function StepApply({
     if (!bus) return;
     // Re-plan from what the boards hold now: a retry skips what already went through.
     const fresh = planApply(tpl, cfg, planDevices(bus.devices), lang);
+    if (fresh.warnings.some((w) => w.code === "modelMismatch")) return;
     setSnapshot(fresh);
     setRun({
       phase: "running",
@@ -190,6 +191,8 @@ export function StepApply({
   };
 
   const blocking = issues.filter((i) => i.code !== "templateMismatch");
+  // A bound uid48 that now names a card of another model: applying would write that card.
+  const wrongModel = !!plan?.warnings.some((w) => w.code === "modelMismatch");
   const busy = run.phase === "running";
 
   if (run.phase === "done") {
@@ -427,7 +430,7 @@ export function StepApply({
                   variant="primary"
                   size="lg"
                   icon={run.phase === "failed" ? RotateCcw : Play}
-                  disabled={blocking.length > 0 || busy}
+                  disabled={blocking.length > 0 || wrongModel || busy}
                   loading={busy}
                   onClick={() => void start()}
                   block
