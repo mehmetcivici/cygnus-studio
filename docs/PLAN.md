@@ -30,9 +30,7 @@ Son doğrulama (2026-11-19): `npm run typecheck` temiz · 972 TypeScript testi �
 2. Eski Cyncoder `SET_CONFIG` yükü (CAN numarası değiştirme): `can_handler.h` / `backend/can_protocol.py` gerekli.
 3. Dokunma hedefleri: `--cy-h-sm` 28 px (öneri 32 px); eldivenle kullanım için "pit kipi" yok.
 4. Kalabalık hatta (62 kart) zaman aşımına uğrayan kartın "kayıp" yerine "yanıt gecikiyor" gösterilmesi doğrulanmadı.
-5. Kart nötre döndükten sonra `CTRL_TIMEOUT` uyarısı her sürüş sonunda "Uyarı" rozeti bırakıyor (protokole uygun, ama kullanıcıya gürültü).
-6. Simülatör farklı senaryolarda aynı uid48'leri üretebiliyor; projede kayıtlı Grafik düzeni başka senaryoda başka modele bağlanıp ham sinyal anahtarı gösteriyor.
-7. Tauri penceresi, paketleme ve GitHub Actions gerçek ortamda denenmedi; STM32 örneği gerçek HAL ile derlenmedi.
+5. Tauri penceresi, paketleme ve GitHub Actions gerçek ortamda denenmedi; STM32 örneği gerçek HAL ile derlenmedi.
 
 ## Yol haritası
 
